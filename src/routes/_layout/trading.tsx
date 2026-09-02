@@ -336,9 +336,13 @@ function TradingSignalsPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-3 sm:flex-col sm:items-end">
-                    <span className={`font-display text-xl font-bold ${isCall ? "text-call" : "text-put"}`}>
-                      {isCall ? "CALL" : "PUT"}
-                    </span>
+                    <StrengthGauge
+                      signed
+                      value={(signal.confidence ?? 0) * (isCall ? 1 : -1)}
+                      label={isCall ? "Força CALL" : "Força PUT"}
+                      display={signal.confidence ? `${signal.confidence}%` : "—"}
+                      size={116}
+                    />
                     <Button
                       size="sm"
                       className={`gap-1 ${
