@@ -238,22 +238,47 @@ class IqOptionClient {
       return;
     }
 
-    if (frame.name !== "candle-generated") return;
-    const msg = frame.msg as Record<string, number> | undefined;
+    const msg = frame.msg as Record<string, unknown> | undefined;
     if (!msg) return;
-    const asset = this.idToName.get(Number(msg["active_id"]));
+
+    // quote-generated is the raw quote channel. Keep the parser permissive
+    // because IQ Option has used both `quote` and `value` across environments.
+    if (["quote-generated", "quotation", "quote", "ticker"].includes(frame.name ?? "")) {
+      const activeId = Number(msg["active_id"] ?? msg["activeId"]);
+      const value = Number(msg["quote"] ?? msg["value"] ?? msg["price"] ?? msg["close"]);
+      const rawTime = Number(msg["at"] ?? msg["time"] ?? msg["timestamp"] ?? Date.now());
+      const asset = this.idToName.get(activeId);
+      if (!asset || !Number.isFinite(value)) return;
+      const timeMs = rawTime < 10_000_000_000 ? rawTime * 1000 : rawTime;
+      const bid = Number(msg["bid"] ?? msg["best_bid"]);
+      const ask = Number(msg["ask"] ?? msg["best_ask"]);
+      for (const handler of [...this.quoteHandlers]) {
+        handler({
+          asset,
+          timeMs: Number.isFinite(timeMs) ? timeMs : Date.now(),
+          value,
+          bid: Number.isFinite(bid) ? bid : null,
+          ask: Number.isFinite(ask) ? ask : null,
+        });
+      }
+      return;
+    }
+
+    if (frame.name !== "candle-generated") return;
+    const candle = msg as Record<string, number>;
+    const asset = this.idToName.get(Number(candle["active_id"]));
     if (!asset) return;
 
     for (const handler of [...this.tickHandlers]) {
       handler({
         asset,
-        sizeSeconds: Number(msg["size"]),
-        time: Number(msg["from"]),
-        open: Number(msg["open"]),
-        high: Number(msg["max"] ?? msg["high"] ?? msg["close"]),
-        low: Number(msg["min"] ?? msg["low"] ?? msg["close"]),
-        close: Number(msg["close"]),
-        volume: Number(msg["volume"] ?? 0),
+        sizeSeconds: Number(candle["size"]),
+        time: Number(candle["from"]),
+        open: Number(candle["open"]),
+        high: Number(candle["max"] ?? candle["high"] ?? candle["close"]),
+        low: Number(candle["min"] ?? candle["low"] ?? candle["close"]),
+        close: Number(candle["close"]),
+        volume: Number(candle["volume"] ?? 0),
       });
     }
   }
