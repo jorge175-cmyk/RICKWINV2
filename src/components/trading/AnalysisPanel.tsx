@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
   Activity,
+  BrainCircuit,
   ArrowDown,
   ArrowUp,
   Gauge,
@@ -20,10 +21,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { analyzeAsset } from "@/lib/analysis/analysis.functions";
+import { deepseekVerdict } from "@/lib/analysis/deepseek.functions";
 import { fuseDominanceWithIndicators } from "@/lib/analysis/candleDominance";
 import { secondsToNextCandle } from "@/lib/analysis/tick";
 import { getIqOptionName, timeframeSeconds } from "@/lib/iqoption/mapping";
 import { useIqOptionStream } from "@/lib/iqoption/useIqOptionStream";
+
 
 interface Props {
   symbol: string | null;
@@ -91,6 +94,52 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
   const dom = closedDominance ?? liveDominance;
   const domSigned = dom ? (dom.dominant === "PUT" ? -dom.dominancePct : dom.dominant === "CALL" ? dom.dominancePct : 0) : 0;
   const tickRate = tickAnalysis?.hft.tickRate ?? 0;
+
+  // ---- DeepSeek final verdict: only for entries above 80% ----
+  const finalDirection = (fused?.direction ?? result?.direction) as "CALL" | "PUT" | null | undefined;
+  const finalConfidence = Math.max(fused?.confidence ?? 0, result?.confidence ?? 0);
+  const qualifies = !!asset && !!finalDirection && finalConfidence >= 80;
+  const verdictKey = closedDominance?.candleTime ?? result?.generatedAt ?? "n/a";
+
+  const askDeepseek = useServerFn(deepseekVerdict);
+  const { data: aiData, isFetching: aiLoading } = useQuery({
+    queryKey: ["deepseek", asset, timeframe, finalDirection, verdictKey],
+    queryFn: () =>
+      askDeepseek({
+        data: {
+          asset: asset!,
+          timeframe,
+          direction: finalDirection as "CALL" | "PUT",
+          confidence: finalConfidence,
+          indicators: {
+            tendencia: result?.metrics.trend,
+            tendencia_superior: result?.metrics.higherTrend,
+            timeframe_superior: result?.higherTimeframe,
+            rsi: result?.metrics.rsi,
+            atr: result?.metrics.atr,
+            padroes: result?.metrics.patterns,
+            preco_entrada: result?.entryPrice,
+            expiracao_min: result?.expirationMinutes,
+            confluencia_local: result?.confidence,
+            razoes: result?.reasons,
+            avisos: result?.warnings,
+            hft: tickAnalysis?.hft,
+            janelas_pressao: tickAnalysis?.windows,
+            poc: tickAnalysis?.poc,
+            ticks: tickAnalysis?.tickCount,
+            dominancia_vela: closedDominance ?? liveDominance,
+            fusao: fused,
+          },
+        },
+      }),
+    enabled: qualifies,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  const ai = aiData?.verdict ?? null;
+  const aiError = aiData?.error ?? null;
+
+
 
   return (
     <Card className="relative overflow-hidden border-border/50 glass-panel">
@@ -232,6 +281,53 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
             </div>
           </section>
         )}
+
+        {qualifies && (
+          <section
+            className="relative overflow-hidden rounded-xl border border-accent/30 bg-surface/50 p-4 backdrop-blur-sm"
+            aria-label="Veredito final DeepSeek"
+          >
+            <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-r from-accent/15 via-transparent to-primary/10" />
+            <div className="relative space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  <BrainCircuit className="h-4 w-4 text-accent" /> Veredito final — DeepSeek
+                </p>
+                {aiLoading && <Badge variant="secondary" className="gap-1"><RefreshCw className="h-3 w-3 animate-spin" /> analisando</Badge>}
+                {ai && (
+                  <div className="flex items-center gap-2">
+                    <Badge
+                      className={
+                        ai.verdict === "CONFIRMAR"
+                          ? "bg-call/20 text-call"
+                          : ai.verdict === "INVERTER"
+                            ? "bg-put/20 text-put"
+                            : "bg-surface-elevated text-muted-foreground"
+                      }
+                    >
+                      {ai.verdict}
+                    </Badge>
+                    <Badge variant="outline" className="font-mono">{ai.direction ?? "—"} · {ai.confidence}%</Badge>
+                  </div>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Sinal local {finalDirection} {finalConfidence}% enviado ao DeepSeek para validação da próxima vela.
+              </p>
+              {ai?.reasoning && <p className="text-sm text-foreground">{ai.reasoning}</p>}
+              {ai && ai.risks.length > 0 && (
+                <ul className="space-y-1 text-xs text-muted-foreground">
+                  {ai.risks.map((risk) => (
+                    <li key={risk} className="flex gap-2"><span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />{risk}</li>
+                  ))}
+                </ul>
+              )}
+              {aiError && <p className="text-xs text-muted-foreground">{aiError}</p>}
+            </div>
+          </section>
+        )}
+
+
 
         {asset && message && <p className="text-sm text-muted-foreground">{message}</p>}
         {asset && !message && !result && (
