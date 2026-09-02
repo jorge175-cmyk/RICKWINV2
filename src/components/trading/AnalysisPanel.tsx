@@ -288,12 +288,13 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
             aria-label="Veredito final DeepSeek"
           >
             <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-r from-accent/15 via-transparent to-primary/10" />
-            <div className="relative space-y-2">
+            <div className="relative space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
                   <BrainCircuit className="h-4 w-4 text-accent" /> Veredito final — DeepSeek
                 </p>
                 {aiLoading && <Badge variant="secondary" className="gap-1"><RefreshCw className="h-3 w-3 animate-spin" /> analisando</Badge>}
+                {!aiLoading && !ai && <Badge variant="outline">aguardando análise</Badge>}
                 {ai && (
                   <div className="flex items-center gap-2">
                     <Badge
@@ -307,20 +308,39 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
                     >
                       {ai.verdict}
                     </Badge>
-                    <Badge variant="outline" className="font-mono">{ai.direction ?? "—"} · {ai.confidence}%</Badge>
+                    <Badge variant="outline" className="font-mono">{ai.direction ?? "—"}</Badge>
                   </div>
                 )}
               </div>
-              <p className="text-xs text-muted-foreground">
-                Sinal local {finalDirection} {finalConfidence}% enviado ao DeepSeek para validação da próxima vela.
-              </p>
-              {ai?.reasoning && <p className="text-sm text-foreground">{ai.reasoning}</p>}
-              {ai && ai.risks.length > 0 && (
-                <ul className="space-y-1 text-xs text-muted-foreground">
-                  {ai.risks.map((risk) => (
-                    <li key={risk} className="flex gap-2"><span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />{risk}</li>
-                  ))}
-                </ul>
+
+              {ai && (
+                <div className="grid gap-3 sm:grid-cols-[160px_1fr] sm:items-center">
+                  <StrengthGauge
+                    value={ai.confidence}
+                    label="Confiança DeepSeek"
+                    caption={`${ai.verdict} · ${ai.direction}`}
+                    size={144}
+                  />
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      Sinal local <span className="font-medium text-foreground">{finalDirection} {finalConfidence}%</span> enviado ao DeepSeek. Abaixo, o veredito para a próxima vela.
+                    </p>
+                    {ai?.reasoning && <p className="text-sm text-foreground">{ai.reasoning}</p>}
+                    {ai.risks.length > 0 && (
+                      <ul className="space-y-1 text-xs text-muted-foreground">
+                        {ai.risks.map((risk) => (
+                          <li key={risk} className="flex gap-2"><span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />{risk}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {!ai && (
+                <p className="text-xs text-muted-foreground">
+                  Sinal local {finalDirection} {finalConfidence}% enviado ao DeepSeek para validação da próxima vela.
+                </p>
               )}
               {aiError && <p className="text-xs text-muted-foreground">{aiError}</p>}
             </div>
