@@ -130,7 +130,12 @@ function TradingSignalsPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="font-display text-3xl font-bold text-call">82%</p>
+              <p className="font-display text-3xl font-bold text-call">
+                {winRate?.winRate != null ? `${winRate.winRate}%` : "—"}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {winRate?.total ? `from ${winRate.total} verified trades (30d)` : "No verified trades yet"}
+              </p>
             </CardContent>
           </Card>
           <Card className="glass-panel border-border/50">
