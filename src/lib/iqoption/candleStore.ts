@@ -15,7 +15,7 @@ export interface CandleSnapshot {
   currentPrice: number | null;
   isLive: boolean;
   status: StreamStatus;
-  error?: string;
+  error?: string | undefined;
 }
 
 type Listener = (snapshot: CandleSnapshot) => void;
@@ -30,7 +30,7 @@ interface Entry {
   historyLoaded: boolean;
   historyPromise: Promise<void> | null;
   lastTickAt: number;
-  error?: string;
+  error?: string | undefined;
 }
 
 function keyOf(asset: string, sizeSeconds: number) {
