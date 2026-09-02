@@ -82,7 +82,7 @@ function TradingSignalsPage() {
     })),
     ...otcAssets.map((a) => ({ symbol: a.symbol, name: a.name, category: a.category })),
   ];
-  const activeSymbol = selectedSymbol ?? streamablePairs[0]?.symbol ?? null;
+  const activeSymbol = selectedSymbol ?? assetOptions[0]?.symbol ?? null;
   useKeepWarm(
     streamablePairs.slice(0, 4).map((p) => p.symbol),
     timeframe,
