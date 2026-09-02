@@ -2,23 +2,21 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { getTradingSignals, getCurrencyPairs, getUserProfile, getWinRate } from "@/lib/trading.functions";
+import { getCurrencyPairs, getUserProfile, getWinRate } from "@/lib/trading.functions";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { ChartDisplay } from "@/components/trading/ChartDisplay";
 import { AssetSelector } from "@/components/trading/AssetSelector";
 import { TimeframeSelector } from "@/components/trading/TimeframeSelector";
 import { AnalysisPanel } from "@/components/trading/AnalysisPanel";
-import { StrengthGauge } from "@/components/trading/StrengthGauge";
 import cardTexture from "@/assets/card-texture.jpg";
 import cardFlow from "@/assets/card-flow.jpg";
 import { getIqOptionName } from "@/lib/iqoption/mapping";
 import { useKeepWarm } from "@/lib/iqoption/useIqOptionStream";
-import { ArrowUp, ArrowDown, Clock, TrendingUp, Zap, Star, LogOut, User } from "lucide-react";
+import { Clock, TrendingUp, Zap, Star, LogOut, User } from "lucide-react";
+
 
 export const Route = createFileRoute("/_layout/trading")({
   loader: async ({ context: { queryClient } }) => {
