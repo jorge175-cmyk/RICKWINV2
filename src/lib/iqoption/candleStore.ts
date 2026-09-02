@@ -16,6 +16,8 @@ const MAX_INTERPOLATED_GAP = 5;
 const MAX_TICKS = 5_000;
 const FRESHNESS_INTERVAL_MS = 30_000;
 const POLL_INTERVAL_MS = 5_000;
+const QUOTE_FALLBACK_INTERVAL_MS = 2_000;
+const QUOTE_FALLBACK_COUNT = 120;
 
 export interface CandleSnapshot {
   candles: CandleData[];
