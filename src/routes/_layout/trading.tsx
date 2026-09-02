@@ -162,6 +162,29 @@ function TradingSignalsPage() {
           </Card>
         </div>
 
+        {activeSymbol && (
+          <div className="mb-8 space-y-4">
+            <div className="flex flex-wrap gap-2">
+              {streamablePairs.map((pair) => (
+                <Button
+                  key={pair.id}
+                  size="sm"
+                  variant={pair.symbol === activeSymbol ? "default" : "outline"}
+                  className="font-mono text-xs"
+                  onClick={() => setSelectedSymbol(pair.symbol)}
+                >
+                  {pair.symbol}
+                </Button>
+              ))}
+            </div>
+            <ChartDisplay
+              symbol={activeSymbol}
+              timeframe={timeframe}
+              onTimeframeChange={setTimeframe}
+            />
+          </div>
+        )}
+
         <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <h1 className="font-display text-2xl font-bold tracking-tight">Live Signals</h1>
           <Tabs value={filter} onValueChange={(v) => setFilter(v as any)} className="w-full sm:w-auto">
