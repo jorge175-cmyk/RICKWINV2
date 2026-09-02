@@ -1,6 +1,13 @@
 // Global candle store: keeps candles and raw quotes alive per asset/timeframe
 // even when no component is rendering them, so analysis remains stateful.
 import { analyseTicks, type Tick, type TickAnalysis } from "@/lib/analysis/tick";
+import {
+  createDominanceState,
+  sampleDominance,
+  summariseDominance,
+  type CandleDominance,
+  type DominanceState,
+} from "@/lib/analysis/candleDominance";
 import { getCandles } from "./candles.functions";
 import { bucketStart, type CandleData } from "./mapping";
 import {
@@ -18,11 +25,16 @@ const FRESHNESS_INTERVAL_MS = 30_000;
 const POLL_INTERVAL_MS = 5_000;
 const QUOTE_FALLBACK_INTERVAL_MS = 2_000;
 const QUOTE_FALLBACK_COUNT = 120;
+const ROLLOVER_INTERVAL_MS = 1_000;
 
 export interface CandleSnapshot {
   candles: CandleData[];
   currentPrice: number | null;
   tickAnalysis: TickAnalysis | null;
+  /** HFT dominance accumulated inside the candle currently forming */
+  liveDominance: CandleDominance | null;
+  /** consolidated dominance of the last candle that closed */
+  closedDominance: CandleDominance | null;
   isLive: boolean;
   status: StreamStatus;
   error?: string | undefined;
@@ -40,8 +52,11 @@ interface Entry {
   historyLoaded: boolean;
   historyPromise: Promise<void> | null;
   lastTickAt: number;
+  dominance: DominanceState | null;
+  closedDominance: CandleDominance | null;
   error?: string | undefined;
 }
+
 
 interface QuoteBuffer {
   ticks: Tick[];
@@ -63,6 +78,7 @@ class CandleStore {
   private timersStarted = false;
   private freshnessTimer: ReturnType<typeof setInterval> | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private dominanceTimer: ReturnType<typeof setInterval> | null = null;
   private quoteEmitFrame: number | null = null;
   private dirtyQuoteAssets = new Set<string>();
 
@@ -80,6 +96,8 @@ class CandleStore {
         historyLoaded: false,
         historyPromise: null,
         lastTickAt: 0,
+        dominance: null,
+        closedDominance: null,
       };
       this.entries.set(key, entry);
     }
@@ -104,6 +122,8 @@ class CandleStore {
       candles: entry?.candles ?? [],
       currentPrice: entry?.currentPrice ?? null,
       tickAnalysis: buffer?.analysis ?? null,
+      liveDominance: entry?.dominance ? summariseDominance(entry.dominance, false) : null,
+      closedDominance: entry?.closedDominance ?? null,
       isLive: lastActivity > 0 && Date.now() - lastActivity < 60_000,
       status: this.status,
       error: entry?.error ?? this.streamError,
@@ -244,8 +264,39 @@ class CandleStore {
       if (entry.asset !== asset) continue;
       entry.lastTickAt = now;
       entry.currentPrice = quote.value;
+      this.recordDominance(entry, buffer.analysis, timeMs);
     }
     this.scheduleQuoteEmit(asset);
+  }
+
+  private recordDominance(entry: Entry, analysis: TickAnalysis | null, timeMs: number) {
+    if (!analysis) return;
+    const candleTime = bucketStart(Math.floor(timeMs / 1_000), entry.sizeSeconds);
+    if (!entry.dominance || candleTime > entry.dominance.candleTime) {
+      if (entry.dominance && entry.dominance.samples > 0) {
+        entry.closedDominance = summariseDominance(entry.dominance, true);
+      }
+      entry.dominance = createDominanceState(candleTime, entry.sizeSeconds);
+    } else if (candleTime < entry.dominance.candleTime) {
+      return;
+    }
+    sampleDominance(entry.dominance, analysis);
+  }
+
+  private rolloverDominance() {
+    const nowSec = Math.floor(iqOptionClient.now() / 1_000);
+    for (const entry of this.entries.values()) {
+      const candleTime = bucketStart(nowSec, entry.sizeSeconds);
+      if (!entry.dominance) {
+        entry.dominance = createDominanceState(candleTime, entry.sizeSeconds);
+      } else if (candleTime > entry.dominance.candleTime) {
+        if (entry.dominance.samples > 0) {
+          entry.closedDominance = summariseDominance(entry.dominance, true);
+        }
+        entry.dominance = createDominanceState(candleTime, entry.sizeSeconds);
+      }
+      if (entry.listeners.size > 0) this.emit(entry);
+    }
   }
 
   private applyTick(tick: LiveTick) {
@@ -338,6 +389,10 @@ class CandleStore {
       void this.pollQuoteFallback();
     }, QUOTE_FALLBACK_INTERVAL_MS);
     void this.pollQuoteFallback();
+
+    // Close the HFT accumulator on the exact timeframe boundary, even if the
+    // provider sends no quote at that instant.
+    this.dominanceTimer = setInterval(() => this.rolloverDominance(), ROLLOVER_INTERVAL_MS);
   }
 
   private quoteFallbackTimer: ReturnType<typeof setInterval> | null = null;
@@ -388,11 +443,13 @@ class CandleStore {
             bid: buffer.bid,
             ask: buffer.ask,
           });
-          const price = buffer.ticks[buffer.ticks.length - 1]?.price ?? null;
+          const latestTick = buffer.ticks[buffer.ticks.length - 1];
+          const price = latestTick?.price ?? null;
           for (const entry of this.entries.values()) {
             if (entry.asset !== asset) continue;
             entry.lastTickAt = now;
             if (price != null) entry.currentPrice = price;
+            this.recordDominance(entry, buffer.analysis, latestTick?.t ?? now);
           }
           this.scheduleQuoteEmit(asset);
         } catch (error) {
@@ -407,12 +464,14 @@ class CandleStore {
   private stopTimers() {
     if (this.freshnessTimer) clearInterval(this.freshnessTimer);
     if (this.pollTimer) clearInterval(this.pollTimer);
+    if (this.dominanceTimer) clearInterval(this.dominanceTimer);
     if (this.quoteFallbackTimer) clearInterval(this.quoteFallbackTimer);
     if (this.quoteEmitFrame != null && typeof window !== "undefined") {
       window.cancelAnimationFrame(this.quoteEmitFrame);
     }
     this.freshnessTimer = null;
     this.pollTimer = null;
+    this.dominanceTimer = null;
     this.quoteFallbackTimer = null;
     this.quoteEmitFrame = null;
     this.dirtyQuoteAssets.clear();

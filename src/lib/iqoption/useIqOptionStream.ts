@@ -6,6 +6,8 @@ const EMPTY: CandleSnapshot = {
   candles: [],
   currentPrice: null,
   tickAnalysis: null,
+  liveDominance: null,
+  closedDominance: null,
   isLive: false,
   status: "idle",
 };
@@ -29,6 +31,8 @@ export function useIqOptionStream(symbol: string | null | undefined, timeframe: 
     data: snapshot.candles,
     currentPrice: snapshot.currentPrice,
     tickAnalysis: snapshot.tickAnalysis,
+    liveDominance: snapshot.liveDominance,
+    closedDominance: snapshot.closedDominance,
     isLive: snapshot.isLive,
     status: snapshot.status,
     error: snapshot.error,

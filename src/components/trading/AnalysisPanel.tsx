@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { analyzeAsset } from "@/lib/analysis/analysis.functions";
+import { fuseDominanceWithIndicators } from "@/lib/analysis/candleDominance";
 import { secondsToNextCandle } from "@/lib/analysis/tick";
 import { getIqOptionName, timeframeSeconds } from "@/lib/iqoption/mapping";
 import { useIqOptionStream } from "@/lib/iqoption/useIqOptionStream";
@@ -44,7 +45,7 @@ function ageLabel(updatedAt: number | undefined, now: number) {
 export function AnalysisPanel({ symbol, timeframe }: Props) {
   const asset = getIqOptionName(symbol);
   const run = useServerFn(analyzeAsset);
-  const { tickAnalysis, isLive, status } = useIqOptionStream(symbol, timeframe);
+  const { tickAnalysis, liveDominance, closedDominance, isLive, status } = useIqOptionStream(symbol, timeframe);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -66,7 +67,21 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
   const result = data?.result ?? null;
   const message = data?.error ?? (error ? "Análise indisponível." : null);
   const direction = result?.direction;
-  const tickDirection = tickAnalysis?.bias;
+  const fused = useMemo(
+    () =>
+      closedDominance
+        ? fuseDominanceWithIndicators(closedDominance, {
+            direction: result?.direction,
+            confidence: result?.confidence,
+            trend: result?.metrics.trend,
+            higherTrend: result?.metrics.higherTrend,
+            rsi: result?.metrics.rsi,
+          })
+        : null,
+    [closedDominance, result],
+  );
+  const tickDirection = fused?.direction ?? tickAnalysis?.bias;
+  const tickConfidence = fused?.confidence ?? tickAnalysis?.confidence;
   const countdown = secondsToNextCandle(now, timeframeSeconds(timeframe));
   const tickStrength = tickAnalysis?.windows[0]?.strength ?? 0;
 
@@ -120,7 +135,7 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
               <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
                 <div className="rounded-md bg-surface/70 px-3 py-2">
                   <p className="text-muted-foreground">Confiança</p>
-                  <p className="mt-1 font-mono font-bold text-foreground">{tickAnalysis ? `${tickAnalysis.confidence}%` : "—"}</p>
+                  <p className="mt-1 font-mono font-bold text-foreground">{tickAnalysis ? `${tickConfidence}%` : "—"}</p>
                 </div>
                 <div className="rounded-md bg-surface/70 px-3 py-2">
                   <p className="text-muted-foreground">Força 3s</p>
@@ -136,6 +151,32 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
                   <p className="text-muted-foreground">Atualização</p>
                   <p className="mt-1 font-mono font-bold text-foreground">{ageLabel(tickAnalysis?.updatedAt, now)}</p>
                 </div>
+              </div>
+
+              <div className="rounded-lg border border-border/50 bg-surface/50 p-3 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-medium text-muted-foreground">
+                    {closedDominance ? "Resultado HFT + indicadores da última vela" : "Dominância HFT na vela em formação"}
+                  </p>
+                  <Badge variant={closedDominance ? "default" : "outline"}>
+                    {closedDominance ? "consolidado" : "monitorando"}
+                  </Badge>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-foreground">
+                  <span>{(closedDominance ?? liveDominance)?.dominant ?? "AGUARDAR"}</span>
+                  <span>{(closedDominance ?? liveDominance)?.dominancePct ?? 0}% frequência dominante</span>
+                  <span>{(closedDominance ?? liveDominance)?.callSamples ?? 0} CALL · {(closedDominance ?? liveDominance)?.putSamples ?? 0} PUT</span>
+                </div>
+                {(closedDominance ?? liveDominance) && (
+                  <p className="mt-2 text-muted-foreground">
+                    Média {(closedDominance ?? liveDominance)?.avgTickRate} ticks/s · pico {(closedDominance ?? liveDominance)?.peakTickRate} · força média {(closedDominance ?? liveDominance)?.netStrength}%
+                  </p>
+                )}
+                {closedDominance && (
+                  <p className="mt-1 text-muted-foreground">
+                    {fused?.agreement === "confluente" ? "HFT e indicadores confirmados" : fused?.agreement === "divergente" ? "HFT divergiu dos indicadores" : "Confluência parcial"} · entrada definida para a próxima vela.
+                  </p>
+                )}
               </div>
             </div>
 
@@ -159,7 +200,13 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
               </div>
             )}
 
-            {tickAnalysis && tickAnalysis.warnings.length > 0 && (
+            {fused && (
+              <div className="space-y-1 border-t border-border/50 pt-3 text-xs text-muted-foreground">
+                {fused.reasons.slice(0, 2).map((reason) => <p key={reason}>{reason}</p>)}
+                {fused.warnings.slice(0, 2).map((warning) => <p key={warning}>{warning}</p>)}
+              </div>
+            )}
+            {!fused && tickAnalysis && tickAnalysis.warnings.length > 0 && (
               <p className="text-xs text-muted-foreground">{tickAnalysis.warnings[0]}</p>
             )}
           </section>
