@@ -13,6 +13,8 @@ import { ChartDisplay } from "@/components/trading/ChartDisplay";
 import { AssetSelector } from "@/components/trading/AssetSelector";
 import { TimeframeSelector } from "@/components/trading/TimeframeSelector";
 import { AnalysisPanel } from "@/components/trading/AnalysisPanel";
+import cardTexture from "@/assets/card-texture.jpg";
+import cardFlow from "@/assets/card-flow.jpg";
 import { getIqOptionName } from "@/lib/iqoption/mapping";
 import { useKeepWarm } from "@/lib/iqoption/useIqOptionStream";
 import { ArrowUp, ArrowDown, Clock, TrendingUp, Zap, Star, LogOut, User } from "lucide-react";
