@@ -29,7 +29,8 @@ export function getIqOptionName(symbol: string | null | undefined): string | nul
   const suffix = /-(OTC|OP|L)$/.exec(raw)?.[1];
   const base = suffix ? raw.replace(/-(OTC|OP|L)$/, "") : raw;
   const mappedBase = EXPLICIT_MAP[base] ?? base.replace(/[^A-Z]/g, "");
-  if (Object.values(EXPLICIT_MAP).includes(mappedBase) || /^[A-Z]{3,10}$/.test(mappedBase)) {
+  const known = Object.values(EXPLICIT_MAP).includes(mappedBase);
+  if (known || /^[A-Z]{6}$/.test(mappedBase) || (suffix && /^[A-Z]{3,10}$/.test(mappedBase))) {
     return suffix ? `${mappedBase}-${suffix}` : mappedBase;
   }
   return null;
