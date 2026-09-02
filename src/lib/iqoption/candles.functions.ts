@@ -24,3 +24,16 @@ export const getCandles = createServerFn({ method: "POST" })
       return { candles: [], error: "Market data temporarily unavailable" };
     }
   });
+
+/** Asset name -> IQ Option active_id, needed for live subscriptions. */
+export const getActiveIds = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async (): Promise<Record<string, number>> => {
+    const { getActiveIdMap } = await import("./iqoption.server");
+    try {
+      return await getActiveIdMap();
+    } catch (error) {
+      console.error("[iqoption] active id map failed", error);
+      return {};
+    }
+  });
