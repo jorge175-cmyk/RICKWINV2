@@ -263,8 +263,35 @@ class CandleStore {
       if (entry.asset !== asset) continue;
       entry.lastTickAt = now;
       entry.currentPrice = quote.value;
+      this.recordDominance(entry, buffer.analysis, timeMs);
     }
     this.scheduleQuoteEmit(asset);
+  }
+
+  private recordDominance(entry: Entry, analysis: TickAnalysis | null, timeMs: number) {
+    if (!analysis) return;
+    const candleTime = bucketStart(Math.floor(timeMs / 1_000), entry.sizeSeconds);
+    if (!entry.dominance || candleTime > entry.dominance.candleTime) {
+      if (entry.dominance) entry.closedDominance = summariseDominance(entry.dominance, true);
+      entry.dominance = createDominanceState(candleTime, entry.sizeSeconds);
+    } else if (candleTime < entry.dominance.candleTime) {
+      return;
+    }
+    sampleDominance(entry.dominance, analysis);
+  }
+
+  private rolloverDominance() {
+    const nowSec = Math.floor(iqOptionClient.now() / 1_000);
+    for (const entry of this.entries.values()) {
+      const candleTime = bucketStart(nowSec, entry.sizeSeconds);
+      if (!entry.dominance) {
+        entry.dominance = createDominanceState(candleTime, entry.sizeSeconds);
+      } else if (candleTime > entry.dominance.candleTime) {
+        entry.closedDominance = summariseDominance(entry.dominance, true);
+        entry.dominance = createDominanceState(candleTime, entry.sizeSeconds);
+      }
+      if (entry.listeners.size > 0) this.emit(entry);
+    }
   }
 
   private applyTick(tick: LiveTick) {
