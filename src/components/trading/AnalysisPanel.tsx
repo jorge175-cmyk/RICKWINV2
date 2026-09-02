@@ -94,6 +94,52 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
   const domSigned = dom ? (dom.dominant === "PUT" ? -dom.dominancePct : dom.dominant === "CALL" ? dom.dominancePct : 0) : 0;
   const tickRate = tickAnalysis?.hft.tickRate ?? 0;
 
+  // ---- DeepSeek final verdict: only for entries above 80% ----
+  const finalDirection = (fused?.direction ?? result?.direction) as "CALL" | "PUT" | null | undefined;
+  const finalConfidence = Math.max(fused?.confidence ?? 0, result?.confidence ?? 0);
+  const qualifies = !!asset && !!finalDirection && finalConfidence >= 80;
+  const verdictKey = closedDominance?.candleTime ?? result?.generatedAt ?? "n/a";
+
+  const askDeepseek = useServerFn(deepseekVerdict);
+  const { data: aiData, isFetching: aiLoading } = useQuery({
+    queryKey: ["deepseek", asset, timeframe, finalDirection, verdictKey],
+    queryFn: () =>
+      askDeepseek({
+        data: {
+          asset: asset!,
+          timeframe,
+          direction: finalDirection as "CALL" | "PUT",
+          confidence: finalConfidence,
+          indicators: {
+            tendencia: result?.metrics.trend,
+            tendencia_superior: result?.metrics.higherTrend,
+            timeframe_superior: result?.higherTimeframe,
+            rsi: result?.metrics.rsi,
+            atr: result?.metrics.atr,
+            padroes: result?.metrics.patterns,
+            preco_entrada: result?.entryPrice,
+            expiracao_min: result?.expirationMinutes,
+            confluencia_local: result?.confidence,
+            razoes: result?.reasons,
+            avisos: result?.warnings,
+            hft: tickAnalysis?.hft,
+            janelas_pressao: tickAnalysis?.windows,
+            poc: tickAnalysis?.poc,
+            ticks: tickAnalysis?.tickCount,
+            dominancia_vela: closedDominance ?? liveDominance,
+            fusao: fused,
+          },
+        },
+      }),
+    enabled: qualifies,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  const ai = aiData?.verdict ?? null;
+  const aiError = aiData?.error ?? null;
+
+
+
   return (
     <Card className="relative overflow-hidden border-border/50 glass-panel">
       <div
