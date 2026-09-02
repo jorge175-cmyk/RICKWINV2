@@ -152,9 +152,9 @@ function TradingSignalsPage() {
           {[
             {
               icon: TrendingUp,
-              label: "Active Signals",
-              value: String(signals.filter((s) => s.status === "active").length),
-              caption: `${signals.length} sinais no histórico recente`,
+              label: "Pares monitorados",
+              value: String(streamablePairs.length),
+              caption: "Ativos com streaming IQ Option disponível",
               image: cardTexture,
               tone: "from-primary/25 via-primary/5 to-transparent",
             },
@@ -218,137 +218,11 @@ function TradingSignalsPage() {
                 <TimeframeSelector value={timeframe} onChange={setTimeframe} />
               </div>
             </div>
-            <ChartDisplay symbol={activeSymbol} timeframe={timeframe} />
             <AnalysisPanel symbol={activeSymbol} timeframe={timeframe} />
           </div>
         )}
-
-        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <h1 className="font-display text-2xl font-bold tracking-tight">Live Signals</h1>
-          <Tabs value={filter} onValueChange={(v) => setFilter(v as any)} className="w-full sm:w-auto">
-            <TabsList className="bg-surface">
-              <TabsTrigger value="all">All</TabsTrigger>
-              <TabsTrigger value="CALL" className="data-[state=active]:bg-call/20 data-[state=active]:text-call">
-                CALL
-              </TabsTrigger>
-              <TabsTrigger value="PUT" className="data-[state=active]:bg-put/20 data-[state=active]:text-put">
-                PUT
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-        </div>
-
-        <div className="grid gap-4">
-          {filteredSignals.length === 0 && (
-            <Card className="glass-panel border-border/50">
-              <CardContent className="py-12 text-center">
-                <p className="text-muted-foreground">No signals available right now.</p>
-              </CardContent>
-            </Card>
-          )}
-          {filteredSignals.map((signal) => {
-            const pair = pairById(signal.pair_id);
-            const isCall = signal.direction === "CALL";
-            const expired = signal.status === "active" && isExpired(signal.created_at, signal.expiration_minutes);
-            const shownStatus = expired ? "expired" : signal.status;
-            return (
-              <Card
-                key={signal.id}
-                className="relative overflow-hidden border-border/50 glass-panel transition-all hover:border-primary/40 hover:shadow-glow"
-              >
-                <div
-                  aria-hidden
-                  className="pointer-events-none absolute inset-0 bg-cover bg-center opacity-[0.1]"
-                  style={{ backgroundImage: `url(${cardTexture})` }}
-                />
-                <div
-                  aria-hidden
-                  className={`pointer-events-none absolute inset-0 bg-gradient-to-r ${
-                    isCall ? "from-call/15" : "from-put/15"
-                  } via-transparent to-primary/10`}
-                />
-                <span
-                  aria-hidden
-                  className={`absolute inset-y-0 left-0 w-1 ${isCall ? "bg-call" : "bg-put"}`}
-                />
-                <CardContent className="relative flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex items-start gap-4">
-                    <div
-                      className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${
-                        isCall ? "bg-call/15 text-call" : "bg-put/15 text-put"
-                      }`}
-                    >
-                      {isCall ? <ArrowUp className="h-6 w-6" /> : <ArrowDown className="h-6 w-6" />}
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-display text-lg font-semibold text-foreground">
-                          {pair?.symbol || "—"}
-                        </h3>
-                        <Badge
-                          variant={shownStatus === "active" ? "default" : "secondary"}
-                          className={`text-[10px] uppercase ${
-                            shownStatus === "active" ? "bg-primary/20 text-primary hover:bg-primary/30" : ""
-                          }`}
-                          suppressHydrationWarning
-                        >
-                          {shownStatus}
-                        </Badge>
-                      </div>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        {signal.analysis_summary || "Technical analysis signal ready for execution."}
-                      </p>
-                      <div className="mt-2 flex flex-wrap gap-3 text-xs text-muted-foreground">
-                        <span className="rounded-md bg-surface px-2 py-1 font-mono" suppressHydrationWarning>
-                          Entrada {formatTime(signal.created_at)}
-                          {relativeTime(signal.created_at) ? ` · ${relativeTime(signal.created_at)}` : ""}
-                        </span>
-                        <span className="rounded-md bg-surface px-2 py-1 font-mono" suppressHydrationWarning>
-                          Expira {formatTime(expiryTime(signal.created_at, signal.expiration_minutes))}
-                        </span>
-
-                        <span className="rounded-md bg-surface px-2 py-1 font-mono">
-                          Entry {signal.entry_price?.toFixed(5) || "—"}
-                        </span>
-                        <span className="rounded-md bg-surface px-2 py-1">
-                          Confidence {signal.confidence ? `${signal.confidence}%` : "—"}
-                        </span>
-                        <span className="rounded-md bg-surface px-2 py-1">
-                          Expires in {signal.expiration_minutes || "—"} min
-                        </span>
-                        <span className="rounded-md bg-surface px-2 py-1 font-mono">
-                          {signal.timeframe || "M5"}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3 sm:flex-col sm:items-end">
-                    <StrengthGauge
-                      signed
-                      value={(signal.confidence ?? 0) * (isCall ? 1 : -1)}
-                      label={isCall ? "Força CALL" : "Força PUT"}
-                      display={signal.confidence ? `${signal.confidence}%` : "—"}
-                      size={116}
-                    />
-                    <Button
-                      size="sm"
-                      className={`gap-1 ${
-                        isCall
-                          ? "bg-call/20 text-call hover:bg-call/30"
-                          : "bg-put/20 text-put hover:bg-put/30"
-                      }`}
-                      variant="outline"
-                      onClick={() => toast.success(`Signal ${pair?.symbol} copied to watchlist`)}
-                    >
-                      <Star className="h-3.5 w-3.5" /> Watch
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
       </main>
     </div>
   );
 }
+
