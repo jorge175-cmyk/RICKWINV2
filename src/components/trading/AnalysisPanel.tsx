@@ -81,6 +81,7 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
     [closedDominance, result],
   );
   const tickDirection = fused?.direction ?? tickAnalysis?.bias;
+  const tickConfidence = fused?.confidence ?? tickAnalysis?.confidence;
   const countdown = secondsToNextCandle(now, timeframeSeconds(timeframe));
   const tickStrength = tickAnalysis?.windows[0]?.strength ?? 0;
 
