@@ -63,6 +63,15 @@ function TradingSignalsPage() {
     queryFn: getWinRate,
   });
   const [filter, setFilter] = useState<"all" | "CALL" | "PUT">("all");
+  const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
+  const [timeframe, setTimeframe] = useState("M5");
+
+  const streamablePairs = pairs.filter((p) => getIqOptionName(p.symbol));
+  const activeSymbol = selectedSymbol ?? streamablePairs[0]?.symbol ?? null;
+  useKeepWarm(
+    streamablePairs.slice(0, 4).map((p) => p.symbol),
+    timeframe,
+  );
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
