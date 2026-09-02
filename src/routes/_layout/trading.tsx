@@ -13,6 +13,7 @@ import { ChartDisplay } from "@/components/trading/ChartDisplay";
 import { AssetSelector } from "@/components/trading/AssetSelector";
 import { TimeframeSelector } from "@/components/trading/TimeframeSelector";
 import { AnalysisPanel } from "@/components/trading/AnalysisPanel";
+import { StrengthGauge } from "@/components/trading/StrengthGauge";
 import cardTexture from "@/assets/card-texture.jpg";
 import cardFlow from "@/assets/card-flow.jpg";
 import { getIqOptionName } from "@/lib/iqoption/mapping";
