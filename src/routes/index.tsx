@@ -131,19 +131,19 @@ function Index() {
           </nav>
 
           <div className="flex items-center gap-3">
-            <Link
-              to="/auth"
+            <a
+              href="/auth"
               className="hidden text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground sm:inline-flex"
             >
               Log in
-            </Link>
-            <Link
-              to="/auth"
+            </a>
+            <a
+              href="/auth"
               className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/20 transition-all hover:bg-primary/90 hover:shadow-primary/30"
             >
               Start free trial
               <ArrowRight className="h-4 w-4" />
-            </Link>
+            </a>
           </div>
         </div>
       </header>
@@ -171,13 +171,13 @@ function Index() {
               </p>
 
               <div className="mt-8 flex flex-wrap items-center gap-4">
-                <Link
-                  to="/auth"
+                <a
+                  href="/auth"
                   className="inline-flex items-center gap-2 rounded-xl bg-primary px-6 py-3.5 text-base font-semibold text-primary-foreground shadow-xl shadow-primary/25 transition-all hover:scale-[1.02] hover:bg-primary/90 hover:shadow-primary/35"
                 >
                   Get started free
                   <ArrowRight className="h-5 w-5" />
-                </Link>
+                </a>
                 <a
                   href="#demo"
                   className="inline-flex items-center gap-2 rounded-xl border border-border/60 bg-surface/60 px-6 py-3.5 text-base font-semibold text-foreground backdrop-blur-sm transition-all hover:border-primary/40 hover:bg-surface-elevated"
@@ -315,13 +315,13 @@ function Index() {
               Join 3,200+ traders using BinaryPulse to identify high-probability setups and trade with discipline.
             </p>
             <div className="mt-8 flex flex-wrap justify-center gap-4">
-              <Link
-                to="/auth"
+              <a
+                href="/auth"
                 className="inline-flex items-center gap-2 rounded-xl bg-white px-6 py-3.5 text-base font-semibold text-primary shadow-lg transition-all hover:bg-white/90 hover:scale-[1.02]"
               >
                 Create free account
                 <ArrowRight className="h-5 w-5" />
-              </Link>
+              </a>
               <a
                 href="#pricing"
                 className="inline-flex items-center gap-2 rounded-xl border border-white/30 bg-white/10 px-6 py-3.5 text-base font-semibold text-white backdrop-blur-sm transition-all hover:bg-white/20"
