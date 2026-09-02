@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { getTradingSignals, getCurrencyPairs, getUserProfile } from "@/lib/trading.functions";
+import { getTradingSignals, getCurrencyPairs, getUserProfile, getWinRate } from "@/lib/trading.functions";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
