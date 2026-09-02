@@ -9,6 +9,9 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
+import { ChartDisplay } from "@/components/trading/ChartDisplay";
+import { getIqOptionName } from "@/lib/iqoption/mapping";
+import { useKeepWarm } from "@/lib/iqoption/useIqOptionStream";
 import { ArrowUp, ArrowDown, Clock, TrendingUp, Zap, Star, LogOut, User } from "lucide-react";
 
 export const Route = createFileRoute("/_layout/trading")({
