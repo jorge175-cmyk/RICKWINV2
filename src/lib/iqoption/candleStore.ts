@@ -84,7 +84,6 @@ class CandleStore {
     this.attachStream();
     void iqOptionClient.subscribe(entry.asset, sizeSeconds);
     void this.loadHistory(entry);
-    listener(this.snapshot(asset, sizeSeconds));
 
     return () => {
       entry.listeners.delete(listener);
@@ -160,7 +159,8 @@ class CandleStore {
     iqOptionClient.onStatus((status, error) => {
       this.status = status;
       this.streamError = error;
-      this.emitAll();
+      // Defer so a synchronous status replay never lands mid-render.
+      queueMicrotask(() => this.emitAll());
     });
     iqOptionClient.onTick((tick) => this.applyTick(tick));
   }

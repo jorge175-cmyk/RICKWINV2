@@ -55,7 +55,7 @@ export function ChartDisplay({ symbol, timeframe, onTimeframeChange }: ChartDisp
             ) : (
               <Badge variant="secondary" className="gap-1">
                 <Activity className="h-3 w-3" />
-                {status === "connecting" ? "conectando" : status === "polling" ? "sync" : "aguardando"}
+                {status === "connecting" ? "conectando" : "sync"}
               </Badge>
             )}
           </CardTitle>
