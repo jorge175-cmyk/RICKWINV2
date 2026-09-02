@@ -85,22 +85,42 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
   const countdown = secondsToNextCandle(now, timeframeSeconds(timeframe));
   const tickStrength = tickAnalysis?.windows[0]?.strength ?? 0;
 
+  const dom = closedDominance ?? liveDominance;
+  const domSigned = dom ? (dom.dominant === "PUT" ? -dom.dominancePct : dom.dominant === "CALL" ? dom.dominancePct : 0) : 0;
+  const tickRate = tickAnalysis?.hft.tickRate ?? 0;
+
   return (
-    <Card className="glass-panel border-border/50">
-      <CardHeader className="flex flex-col gap-3 pb-3 sm:flex-row sm:items-center sm:justify-between">
+    <Card className="relative overflow-hidden border-border/50 glass-panel">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-cover bg-center opacity-[0.16]"
+        style={{ backgroundImage: `url(${flowTexture})` }}
+      />
+      <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-br from-primary/15 via-transparent to-accent/10" />
+      <CardHeader className="relative flex flex-col gap-3 pb-3 sm:flex-row sm:items-center sm:justify-between">
         <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-          <Sparkles className="h-4 w-4" /> Análise para a próxima vela — {symbol ?? "—"} · {timeframe}
+          <Sparkles className="h-4 w-4 text-accent" /> Análise para a próxima vela — {symbol ?? "—"} · {timeframe}
         </CardTitle>
         <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={isFetching || !asset} className="gap-1.5">
           <RefreshCw className={`h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} />
           <span className="hidden sm:inline">Atualizar</span>
         </Button>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="relative space-y-4">
         {!asset && <p className="text-sm text-muted-foreground">Selecione um ativo disponível para análise.</p>}
 
         {asset && (
-          <section className="space-y-3 rounded-lg border border-primary/25 bg-primary/5 p-4" aria-label="Análise de tick para a próxima vela">
+          <section
+            className="relative overflow-hidden rounded-xl border border-primary/25 p-4 shadow-card"
+            aria-label="Análise de tick para a próxima vela"
+          >
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-0 bg-cover bg-center opacity-[0.12]"
+              style={{ backgroundImage: `url(${chartTexture})` }}
+            />
+            <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-tr from-primary/20 via-surface/40 to-accent/10" />
+            <div className="relative space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
@@ -113,92 +133,89 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
                   <Timer className="h-3 w-3" /> {formatCountdown(countdown)}
                 </Badge>
                 <Badge variant={isLive ? "default" : "secondary"} className="gap-1">
-                  <span className={`h-1.5 w-1.5 rounded-full ${isLive ? "bg-primary-foreground" : "bg-muted-foreground"}`} />
+                  <span className={`h-1.5 w-1.5 rounded-full ${isLive ? "bg-primary-foreground animate-pulse-glow" : "bg-muted-foreground"}`} />
                   {isLive ? "ticks ao vivo" : status === "connecting" ? "conectando" : "aguardando dados"}
                 </Badge>
               </div>
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-[auto_1fr] sm:items-center">
-              <div
-                className={`flex items-center gap-2 rounded-lg px-4 py-3 font-display text-lg font-bold ${
-                  tickDirection === "CALL"
-                    ? "bg-call/15 text-call"
-                    : tickDirection === "PUT"
-                      ? "bg-put/15 text-put"
-                      : "bg-surface text-muted-foreground"
-                }`}
-              >
-                {tickDirection === "CALL" ? <ArrowUp className="h-5 w-5" /> : tickDirection === "PUT" ? <ArrowDown className="h-5 w-5" /> : <Minus className="h-5 w-5" />}
-                {tickDirection ?? "AGUARDAR"}
-              </div>
-              <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-                <div className="rounded-md bg-surface/70 px-3 py-2">
-                  <p className="text-muted-foreground">Confiança</p>
-                  <p className="mt-1 font-mono font-bold text-foreground">{tickAnalysis ? `${tickConfidence}%` : "—"}</p>
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,260px)_1fr] lg:items-center">
+              <div className="space-y-3 rounded-xl border border-border/50 bg-surface/60 p-4 backdrop-blur-sm">
+                <div
+                  className={`flex items-center justify-center gap-2 rounded-lg px-4 py-3 font-display text-xl font-bold ${
+                    tickDirection === "CALL"
+                      ? "bg-call/15 text-call"
+                      : tickDirection === "PUT"
+                        ? "bg-put/15 text-put"
+                        : "bg-surface-elevated text-muted-foreground"
+                  }`}
+                >
+                  {tickDirection === "CALL" ? <ArrowUp className="h-5 w-5" /> : tickDirection === "PUT" ? <ArrowDown className="h-5 w-5" /> : <Minus className="h-5 w-5" />}
+                  {tickDirection ?? "AGUARDAR"}
                 </div>
-                <div className="rounded-md bg-surface/70 px-3 py-2">
-                  <p className="text-muted-foreground">Força 3s</p>
-                  <p className={`mt-1 font-mono font-bold ${tickStrength > 0 ? "text-call" : tickStrength < 0 ? "text-put" : "text-foreground"}`}>
-                    {tickAnalysis ? `${tickStrength > 0 ? "+" : ""}${tickStrength}%` : "—"}
-                  </p>
-                </div>
-                <div className="rounded-md bg-surface/70 px-3 py-2">
-                  <p className="text-muted-foreground">Ticks</p>
-                  <p className="mt-1 font-mono font-bold text-foreground">{tickAnalysis?.tickCount ?? "—"}</p>
-                </div>
-                <div className="rounded-md bg-surface/70 px-3 py-2">
-                  <p className="text-muted-foreground">Atualização</p>
-                  <p className="mt-1 font-mono font-bold text-foreground">{ageLabel(tickAnalysis?.updatedAt, now)}</p>
+                <StrengthGauge
+                  value={tickConfidence ?? 0}
+                  label="Confiança da entrada"
+                  caption={ageLabel(tickAnalysis?.updatedAt, now)}
+                  size={168}
+                />
+                <div className="grid grid-cols-2 gap-2 text-center text-[11px]">
+                  <div className="rounded-md bg-surface/70 px-2 py-1.5">
+                    <p className="text-muted-foreground">Ticks</p>
+                    <p className="font-mono font-bold text-foreground">{tickAnalysis?.tickCount ?? "—"}</p>
+                  </div>
+                  <div className="rounded-md bg-surface/70 px-2 py-1.5">
+                    <p className="text-muted-foreground">Vol. micro</p>
+                    <p className="font-mono font-bold text-foreground">{tickAnalysis ? `${tickAnalysis.hft.microVolBps.toFixed(2)} bps` : "—"}</p>
+                  </div>
                 </div>
               </div>
 
-              <div className="rounded-lg border border-border/50 bg-surface/50 p-3 text-xs">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="font-medium text-muted-foreground">
-                    {closedDominance ? "Resultado HFT + indicadores da última vela" : "Dominância HFT na vela em formação"}
-                  </p>
-                  <Badge variant={closedDominance ? "default" : "outline"}>
-                    {closedDominance ? "consolidado" : "monitorando"}
-                  </Badge>
-                </div>
-                <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-foreground">
-                  <span>{(closedDominance ?? liveDominance)?.dominant ?? "AGUARDAR"}</span>
-                  <span>{(closedDominance ?? liveDominance)?.dominancePct ?? 0}% frequência dominante</span>
-                  <span>{(closedDominance ?? liveDominance)?.callSamples ?? 0} CALL · {(closedDominance ?? liveDominance)?.putSamples ?? 0} PUT</span>
-                </div>
-                {(closedDominance ?? liveDominance) && (
-                  <p className="mt-2 text-muted-foreground">
-                    Média {(closedDominance ?? liveDominance)?.avgTickRate} ticks/s · pico {(closedDominance ?? liveDominance)?.peakTickRate} · força média {(closedDominance ?? liveDominance)?.netStrength}%
-                  </p>
-                )}
-                {closedDominance && (
-                  <p className="mt-1 text-muted-foreground">
-                    {fused?.agreement === "confluente" ? "HFT e indicadores confirmados" : fused?.agreement === "divergente" ? "HFT divergiu dos indicadores" : "Confluência parcial"} · entrada definida para a próxima vela.
-                  </p>
-                )}
+              <div className="grid grid-cols-2 gap-2 rounded-xl border border-border/50 bg-surface/40 p-3 backdrop-blur-sm sm:grid-cols-3 xl:grid-cols-5">
+                <StrengthGauge signed value={tickAnalysis?.windows[0]?.strength ?? 0} label="Pressão 3s" caption="micro fluxo" size={112} />
+                <StrengthGauge signed value={tickAnalysis?.windows[1]?.strength ?? 0} label="Pressão 15s" caption="curto prazo" size={112} />
+                <StrengthGauge signed value={tickAnalysis?.windows[2]?.strength ?? 0} label="Pressão 60s" caption="tempo maior" size={112} />
+                <StrengthGauge
+                  value={Math.min(100, (tickRate / 8) * 100)}
+                  label="Velocidade HFT"
+                  caption={`${tickAnalysis?.hft.acceleration.toFixed(1) ?? "0.0"}× ritmo`}
+                  display={`${tickRate.toFixed(1)}/s`}
+                  size={112}
+                />
+                <StrengthGauge
+                  signed
+                  value={domSigned}
+                  label={closedDominance ? "Dominância fechada" : "Dominância viva"}
+                  caption={`${dom?.callSamples ?? 0} CALL · ${dom?.putSamples ?? 0} PUT`}
+                  size={112}
+                />
               </div>
             </div>
 
-            {tickAnalysis && (
-              <div className="grid gap-3 border-t border-border/50 pt-3 text-xs sm:grid-cols-3">
-                <div className="space-y-1.5">
-                  <p className="flex items-center gap-1 font-medium text-muted-foreground"><Gauge className="h-3.5 w-3.5" /> HFT / microestrutura</p>
-                  <p className="font-mono text-foreground">{tickAnalysis.hft.tickRate.toFixed(1)} ticks/s · {tickAnalysis.hft.acceleration.toFixed(1)}× ritmo</p>
-                  <p className="text-muted-foreground">Streak {tickAnalysis.hft.streak > 0 ? "+" : ""}{tickAnalysis.hft.streak} · agressão {tickAnalysis.hft.aggression}%</p>
-                </div>
-                <div className="space-y-1.5">
-                  <p className="flex items-center gap-1 font-medium text-muted-foreground"><Waves className="h-3.5 w-3.5" /> Pressão</p>
-                  <p className="font-mono text-foreground">3s {tickAnalysis.windows[0]?.strength ?? 0}% · 15s {tickAnalysis.windows[1]?.strength ?? 0}%</p>
-                  <p className="text-muted-foreground">60s {tickAnalysis.windows[2]?.strength ?? 0}% · volatilidade {tickAnalysis.hft.microVolBps.toFixed(2)} bps</p>
-                </div>
-                <div className="space-y-1.5">
-                  <p className="flex items-center gap-1 font-medium text-muted-foreground"><Layers className="h-3.5 w-3.5" /> POC / valor</p>
-                  <p className="font-mono text-foreground">POC {tickAnalysis.poc.poc?.toFixed(5) ?? "—"}</p>
-                  <p className="text-muted-foreground">{tickAnalysis.poc.insideValueArea ? "Dentro" : "Fora"} da área · {tickAnalysis.poc.distanceBps.toFixed(1)} bps</p>
-                </div>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-lg border border-border/50 bg-surface/60 p-3 text-xs backdrop-blur-sm">
+                <p className="flex items-center gap-1 font-medium text-muted-foreground"><Gauge className="h-3.5 w-3.5" /> HFT / microestrutura</p>
+                <p className="mt-1.5 font-mono text-foreground">{tickRate.toFixed(1)} ticks/s · {tickAnalysis?.hft.acceleration.toFixed(1) ?? "—"}× ritmo</p>
+                <p className="text-muted-foreground">Streak {tickAnalysis && tickAnalysis.hft.streak > 0 ? "+" : ""}{tickAnalysis?.hft.streak ?? 0} · agressão {tickAnalysis?.hft.aggression ?? 0}%</p>
               </div>
+              <div className="rounded-lg border border-border/50 bg-surface/60 p-3 text-xs backdrop-blur-sm">
+                <p className="flex items-center gap-1 font-medium text-muted-foreground"><Waves className="h-3.5 w-3.5" /> Dominância da vela</p>
+                <p className="mt-1.5 font-mono text-foreground">{dom?.dominant ?? "AGUARDAR"} · {dom?.dominancePct ?? 0}%</p>
+                <p className="text-muted-foreground">média {dom?.avgTickRate ?? 0} t/s · pico {dom?.peakTickRate ?? 0} · força {dom?.netStrength ?? 0}%</p>
+              </div>
+              <div className="rounded-lg border border-border/50 bg-surface/60 p-3 text-xs backdrop-blur-sm">
+                <p className="flex items-center gap-1 font-medium text-muted-foreground"><Layers className="h-3.5 w-3.5" /> POC / valor</p>
+                <p className="mt-1.5 font-mono text-foreground">POC {tickAnalysis?.poc.poc?.toFixed(5) ?? "—"}</p>
+                <p className="text-muted-foreground">{tickAnalysis?.poc.insideValueArea ? "Dentro" : "Fora"} da área · {tickAnalysis?.poc.distanceBps.toFixed(1) ?? "—"} bps</p>
+              </div>
+            </div>
+
+            {closedDominance && (
+              <p className="text-xs text-muted-foreground">
+                {fused?.agreement === "confluente" ? "HFT e indicadores confirmados" : fused?.agreement === "divergente" ? "HFT divergiu dos indicadores" : "Confluência parcial"} · entrada definida para a próxima vela.
+              </p>
             )}
+
 
             {fused && (
               <div className="space-y-1 border-t border-border/50 pt-3 text-xs text-muted-foreground">
