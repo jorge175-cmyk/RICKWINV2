@@ -20,10 +20,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { analyzeAsset } from "@/lib/analysis/analysis.functions";
+import { deepseekVerdict } from "@/lib/analysis/deepseek.functions";
 import { fuseDominanceWithIndicators } from "@/lib/analysis/candleDominance";
 import { secondsToNextCandle } from "@/lib/analysis/tick";
 import { getIqOptionName, timeframeSeconds } from "@/lib/iqoption/mapping";
 import { useIqOptionStream } from "@/lib/iqoption/useIqOptionStream";
+
 
 interface Props {
   symbol: string | null;
