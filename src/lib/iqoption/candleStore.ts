@@ -84,7 +84,6 @@ class CandleStore {
     this.attachStream();
     void iqOptionClient.subscribe(entry.asset, sizeSeconds);
     void this.loadHistory(entry);
-    listener(this.snapshot(asset, sizeSeconds));
 
     return () => {
       entry.listeners.delete(listener);
