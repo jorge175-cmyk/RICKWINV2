@@ -10,9 +10,16 @@ import {
   Target,
   TrendingUp,
   Zap,
+  LogOut,
+  Loader2,
 } from "lucide-react";
 
+import { useAuth } from "@/lib/auth";
+import { Button } from "@/components/ui/button";
+import { supabase } from "@/integrations/supabase/client";
+
 import heroImage from "../assets/hero-forex.jpg";
+
 
 export const Route = createFileRoute("/")({
   component: Index,
