@@ -54,9 +54,9 @@ export async function openUpstreamSocket(): Promise<WebSocket> {
         "User-Agent": "Mozilla/5.0 BinaryPulse",
       },
     });
-    const socket = res.webSocket;
+    const socket = res.webSocket as (WebSocket & { accept?: () => void }) | null | undefined;
     if (!socket) throw new Error("Upstream refused the WebSocket upgrade");
-    socket.accept();
+    socket.accept?.();
     return socket;
   }
 
