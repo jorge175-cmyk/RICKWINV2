@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { analyzeAsset } from "@/lib/analysis/analysis.functions";
+import { fuseDominanceWithIndicators } from "@/lib/analysis/candleDominance";
 import { secondsToNextCandle } from "@/lib/analysis/tick";
 import { getIqOptionName, timeframeSeconds } from "@/lib/iqoption/mapping";
 import { useIqOptionStream } from "@/lib/iqoption/useIqOptionStream";
@@ -44,7 +45,7 @@ function ageLabel(updatedAt: number | undefined, now: number) {
 export function AnalysisPanel({ symbol, timeframe }: Props) {
   const asset = getIqOptionName(symbol);
   const run = useServerFn(analyzeAsset);
-  const { tickAnalysis, isLive, status } = useIqOptionStream(symbol, timeframe);
+  const { tickAnalysis, liveDominance, closedDominance, isLive, status } = useIqOptionStream(symbol, timeframe);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -66,7 +67,20 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
   const result = data?.result ?? null;
   const message = data?.error ?? (error ? "Análise indisponível." : null);
   const direction = result?.direction;
-  const tickDirection = tickAnalysis?.bias;
+  const fused = useMemo(
+    () =>
+      closedDominance
+        ? fuseDominanceWithIndicators(closedDominance, {
+            direction: result?.direction,
+            confidence: result?.confidence,
+            trend: result?.metrics.trend,
+            higherTrend: result?.metrics.higherTrend,
+            rsi: result?.metrics.rsi,
+          })
+        : null,
+    [closedDominance, result],
+  );
+  const tickDirection = fused?.direction ?? tickAnalysis?.bias;
   const countdown = secondsToNextCandle(now, timeframeSeconds(timeframe));
   const tickStrength = tickAnalysis?.windows[0]?.strength ?? 0;
 

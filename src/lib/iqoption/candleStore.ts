@@ -439,11 +439,13 @@ class CandleStore {
             bid: buffer.bid,
             ask: buffer.ask,
           });
-          const price = buffer.ticks[buffer.ticks.length - 1]?.price ?? null;
+          const latestTick = buffer.ticks[buffer.ticks.length - 1];
+          const price = latestTick?.price ?? null;
           for (const entry of this.entries.values()) {
             if (entry.asset !== asset) continue;
             entry.lastTickAt = now;
             if (price != null) entry.currentPrice = price;
+            this.recordDominance(entry, buffer.analysis, latestTick?.t ?? now);
           }
           this.scheduleQuoteEmit(asset);
         } catch (error) {
