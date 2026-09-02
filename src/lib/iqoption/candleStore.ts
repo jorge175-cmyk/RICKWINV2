@@ -331,16 +331,89 @@ class CandleStore {
         void this.loadHistory(entry, true);
       }
     }, POLL_INTERVAL_MS);
+
+    // Tick fallback: when quotes can't stream (no WebSocket), synthesise ticks
+    // from 1-second candles so the HFT/POC read still works.
+    this.quoteFallbackTimer = setInterval(() => {
+      void this.pollQuoteFallback();
+    }, QUOTE_FALLBACK_INTERVAL_MS);
+    void this.pollQuoteFallback();
+  }
+
+  private quoteFallbackTimer: ReturnType<typeof setInterval> | null = null;
+  private quoteFallbackInFlight = new Set<string>();
+
+  private quotesAreStreaming(asset: string) {
+    const buffer = this.quoteBuffers.get(asset);
+    return (
+      iqOptionClient.getStatus() === "live" && !!buffer && Date.now() - buffer.lastAt < 5_000
+    );
+  }
+
+  private async pollQuoteFallback() {
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+    const assets = new Set<string>();
+    for (const entry of this.entries.values()) {
+      if (entry.listeners.size === 0 && !entry.background) continue;
+      assets.add(entry.asset);
+    }
+
+    await Promise.all(
+      [...assets].map(async (asset) => {
+        if (this.quotesAreStreaming(asset)) return;
+        if (this.quoteFallbackInFlight.has(asset)) return;
+        this.quoteFallbackInFlight.add(asset);
+        try {
+          const result = await getCandles({
+            data: { asset, sizeSeconds: 1, count: QUOTE_FALLBACK_COUNT },
+          });
+          if (result.candles.length === 0) return;
+          const buffer = this.ensureQuoteBuffer(asset);
+          const lastT = buffer.ticks[buffer.ticks.length - 1]?.t ?? 0;
+          let added = 0;
+          for (const candle of result.candles) {
+            const t = candle.time * 1_000;
+            if (t <= lastT) continue;
+            buffer.ticks.push({ t, price: candle.close });
+            added += 1;
+          }
+          if (added === 0 && buffer.analysis) return;
+          if (buffer.ticks.length > MAX_TICKS) {
+            buffer.ticks.splice(0, buffer.ticks.length - MAX_TICKS);
+          }
+          const now = Date.now();
+          buffer.lastAt = now;
+          buffer.analysis = analyseTicks(buffer.ticks, {
+            now: buffer.ticks[buffer.ticks.length - 1]?.t ?? now,
+            bid: buffer.bid,
+            ask: buffer.ask,
+          });
+          const price = buffer.ticks[buffer.ticks.length - 1]?.price ?? null;
+          for (const entry of this.entries.values()) {
+            if (entry.asset !== asset) continue;
+            entry.lastTickAt = now;
+            if (price != null) entry.currentPrice = price;
+          }
+          this.scheduleQuoteEmit(asset);
+        } catch (error) {
+          console.error("[iqoption] tick fallback failed", error);
+        } finally {
+          this.quoteFallbackInFlight.delete(asset);
+        }
+      }),
+    );
   }
 
   private stopTimers() {
     if (this.freshnessTimer) clearInterval(this.freshnessTimer);
     if (this.pollTimer) clearInterval(this.pollTimer);
+    if (this.quoteFallbackTimer) clearInterval(this.quoteFallbackTimer);
     if (this.quoteEmitFrame != null && typeof window !== "undefined") {
       window.cancelAnimationFrame(this.quoteEmitFrame);
     }
     this.freshnessTimer = null;
     this.pollTimer = null;
+    this.quoteFallbackTimer = null;
     this.quoteEmitFrame = null;
     this.dirtyQuoteAssets.clear();
     this.timersStarted = false;
