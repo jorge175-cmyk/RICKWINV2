@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as LayoutRouteImport } from './routes/_layout'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as LayoutTradingRouteImport } from './routes/_layout/trading'
+import { Route as ApiPublicIqoptionWsRouteImport } from './routes/api/public/iqoption-ws'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -33,16 +34,23 @@ const LayoutTradingRoute = LayoutTradingRouteImport.update({
   path: '/trading',
   getParentRoute: () => LayoutRoute,
 } as any)
+const ApiPublicIqoptionWsRoute = ApiPublicIqoptionWsRouteImport.update({
+  id: '/api/public/iqoption-ws',
+  path: '/api/public/iqoption-ws',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/trading': typeof LayoutTradingRoute
+  '/api/public/iqoption-ws': typeof ApiPublicIqoptionWsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/trading': typeof LayoutTradingRoute
+  '/api/public/iqoption-ws': typeof ApiPublicIqoptionWsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -50,19 +58,27 @@ export interface FileRoutesById {
   '/_layout': typeof LayoutRouteWithChildren
   '/auth': typeof AuthRoute
   '/_layout/trading': typeof LayoutTradingRoute
+  '/api/public/iqoption-ws': typeof ApiPublicIqoptionWsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/auth' | '/trading'
+  fullPaths: '/' | '/auth' | '/trading' | '/api/public/iqoption-ws'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/auth' | '/trading'
-  id: '__root__' | '/' | '/_layout' | '/auth' | '/_layout/trading'
+  to: '/' | '/auth' | '/trading' | '/api/public/iqoption-ws'
+  id:
+    | '__root__'
+    | '/'
+    | '/_layout'
+    | '/auth'
+    | '/_layout/trading'
+    | '/api/public/iqoption-ws'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LayoutRoute: typeof LayoutRouteWithChildren
   AuthRoute: typeof AuthRoute
+  ApiPublicIqoptionWsRoute: typeof ApiPublicIqoptionWsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -95,6 +111,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutTradingRouteImport
       parentRoute: typeof LayoutRoute
     }
+    '/api/public/iqoption-ws': {
+      id: '/api/public/iqoption-ws'
+      path: '/api/public/iqoption-ws'
+      fullPath: '/api/public/iqoption-ws'
+      preLoaderRoute: typeof ApiPublicIqoptionWsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -113,6 +136,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LayoutRoute: LayoutRouteWithChildren,
   AuthRoute: AuthRoute,
+  ApiPublicIqoptionWsRoute: ApiPublicIqoptionWsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
