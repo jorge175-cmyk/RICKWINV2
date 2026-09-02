@@ -16,8 +16,20 @@ export interface LiveTick {
   volume: number;
 }
 
+/** Raw quote update — the highest-frequency data IQ Option publishes. */
+export interface LiveQuote {
+  asset: string;
+  /** epoch milliseconds */
+  timeMs: number;
+  value: number;
+  bid: number | null;
+  ask: number | null;
+}
+
 type TickHandler = (tick: LiveTick) => void;
+type QuoteHandler = (quote: LiveQuote) => void;
 type StatusHandler = (status: StreamStatus, error?: string) => void;
+
 
 const PROXY_PATH = "/api/public/iqoption-ws";
 const ZOMBIE_TIMEOUT_MS = 45_000;
