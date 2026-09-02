@@ -42,11 +42,21 @@ export const getOtcAssets = createServerFn({ method: "GET" })
         .filter((name) => name.endsWith("-OTC"))
         .map((name) => {
           const base = name.replace(/-OTC$/, "");
-          const pretty =
-            /^[A-Z]{6}$/.test(base) ? `${base.slice(0, 3)}/${base.slice(3)}` : base;
-          return { symbol: name, name: `${pretty} OTC`, category: "OTC" };
+          const isForex = /^[A-Z]{6}$/.test(base);
+          const pretty = isForex ? `${base.slice(0, 3)}/${base.slice(3)}` : base;
+          return {
+            symbol: name,
+            name: `${pretty} OTC`,
+            category: isForex ? "FOREX OTC" : "OUTROS OTC",
+          };
         })
-        .sort((a, b) => a.symbol.localeCompare(b.symbol));
+        .sort((a, b) =>
+          a.category === b.category
+            ? a.symbol.localeCompare(b.symbol)
+            : a.category === "FOREX OTC"
+              ? -1
+              : 1,
+        );
     } catch (error) {
       console.error("[iqoption] otc asset list failed", error);
       return [];
