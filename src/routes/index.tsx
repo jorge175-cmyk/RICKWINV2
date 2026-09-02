@@ -103,7 +103,68 @@ const stats = [
   { value: "24/7", label: "Market monitoring" },
 ];
 
+function AuthHeaderButtons() {
+  const { user, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-3">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (user) {
+    return (
+      <div className="flex items-center gap-3">
+        <Link
+          to="/trading"
+          className="hidden text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground sm:inline-flex"
+        >
+          Trading
+        </Link>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="hidden text-sm font-semibold text-muted-foreground hover:text-foreground sm:inline-flex"
+          onClick={async () => {
+            await supabase.auth.signOut();
+          }}
+        >
+          <LogOut className="mr-1 h-4 w-4" /> Log out
+        </Button>
+        <Link
+          to="/trading"
+          className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/20 transition-all hover:bg-primary/90 hover:shadow-primary/30"
+        >
+          Open trading
+          <ArrowRight className="h-4 w-4" />
+        </Link>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-3">
+      <Link
+        to="/auth"
+        className="hidden text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground sm:inline-flex"
+      >
+        Log in
+      </Link>
+      <Link
+        to="/auth"
+        className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/20 transition-all hover:bg-primary/90 hover:shadow-primary/30"
+      >
+        Start free trial
+        <ArrowRight className="h-4 w-4" />
+      </Link>
+    </div>
+  );
+}
+
 function Index() {
+
   return (
     <div className="relative min-h-screen overflow-x-hidden bg-background text-foreground">
       {/* Background aurora */}
