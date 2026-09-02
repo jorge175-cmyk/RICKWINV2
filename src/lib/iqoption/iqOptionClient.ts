@@ -68,6 +68,11 @@ class IqOptionClient {
     return () => this.tickHandlers.delete(handler);
   }
 
+  onQuote(handler: QuoteHandler) {
+    this.quoteHandlers.add(handler);
+    return () => this.quoteHandlers.delete(handler);
+  }
+
   onStatus(handler: StatusHandler) {
     this.statusHandlers.add(handler);
     handler(this.status, this.error);
