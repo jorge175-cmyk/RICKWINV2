@@ -26,10 +26,6 @@ export const Route = createFileRoute("/_layout/trading")({
         queryFn: getCurrencyPairs,
       }),
       queryClient.ensureQueryData({
-        queryKey: ["signals"],
-        queryFn: getTradingSignals,
-      }),
-      queryClient.ensureQueryData({
         queryKey: ["profile"],
         queryFn: getUserProfile,
       }),
@@ -40,6 +36,7 @@ export const Route = createFileRoute("/_layout/trading")({
     ]);
   },
   component: TradingSignalsPage,
+
   head: () => ({
     title: "Trading Signals — BinaryPulse",
     meta: [
