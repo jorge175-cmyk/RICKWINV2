@@ -104,7 +104,7 @@ class CandleStore {
       candles: entry?.candles ?? [],
       currentPrice: entry?.currentPrice ?? null,
       tickAnalysis: buffer?.analysis ?? null,
-      isLive: this.status === "live" && lastActivity > 0 && Date.now() - lastActivity < 60_000,
+      isLive: lastActivity > 0 && Date.now() - lastActivity < 60_000,
       status: this.status,
       error: entry?.error ?? this.streamError,
     };
