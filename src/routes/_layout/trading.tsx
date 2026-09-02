@@ -49,6 +49,20 @@ export const Route = createFileRoute("/_layout/trading")({
   }),
 });
 
+function formatTime(value: string | null | undefined) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function expiryTime(createdAt: string | null | undefined, minutes: number | null | undefined) {
+  if (!createdAt || !minutes) return null;
+  const date = new Date(createdAt);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Date(date.getTime() + minutes * 60_000).toISOString();
+}
+
 function TradingSignalsPage() {
   const { user } = useAuth();
   const { data: pairs = [] } = useSuspenseQuery({
@@ -247,6 +261,12 @@ function TradingSignalsPage() {
                         {signal.analysis_summary || "Technical analysis signal ready for execution."}
                       </p>
                       <div className="mt-2 flex flex-wrap gap-3 text-xs text-muted-foreground">
+                        <span className="rounded-md bg-surface px-2 py-1 font-mono" suppressHydrationWarning>
+                          Entrada {formatTime(signal.created_at)}
+                        </span>
+                        <span className="rounded-md bg-surface px-2 py-1 font-mono" suppressHydrationWarning>
+                          Expira {formatTime(expiryTime(signal.created_at, signal.expiration_minutes))}
+                        </span>
                         <span className="rounded-md bg-surface px-2 py-1 font-mono">
                           Entry {signal.entry_price?.toFixed(5) || "—"}
                         </span>
