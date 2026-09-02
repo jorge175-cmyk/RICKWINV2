@@ -267,9 +267,24 @@ function TradingSignalsPage() {
             return (
               <Card
                 key={signal.id}
-                className="glass-panel border-border/50 transition-all hover:border-primary/30 hover:shadow-glow"
+                className="relative overflow-hidden border-border/50 glass-panel transition-all hover:border-primary/40 hover:shadow-glow"
               >
-                <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute inset-0 bg-cover bg-center opacity-[0.1]"
+                  style={{ backgroundImage: `url(${cardTexture})` }}
+                />
+                <div
+                  aria-hidden
+                  className={`pointer-events-none absolute inset-0 bg-gradient-to-r ${
+                    isCall ? "from-call/15" : "from-put/15"
+                  } via-transparent to-primary/10`}
+                />
+                <span
+                  aria-hidden
+                  className={`absolute inset-y-0 left-0 w-1 ${isCall ? "bg-call" : "bg-put"}`}
+                />
+                <CardContent className="relative flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-start gap-4">
                     <div
                       className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${
