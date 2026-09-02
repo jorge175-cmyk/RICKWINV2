@@ -10,6 +10,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { ChartDisplay } from "@/components/trading/ChartDisplay";
+import { AssetSelector } from "@/components/trading/AssetSelector";
+import { TimeframeSelector } from "@/components/trading/TimeframeSelector";
 import { getIqOptionName } from "@/lib/iqoption/mapping";
 import { useKeepWarm } from "@/lib/iqoption/useIqOptionStream";
 import { ArrowUp, ArrowDown, Clock, TrendingUp, Zap, Star, LogOut, User } from "lucide-react";
@@ -164,24 +166,26 @@ function TradingSignalsPage() {
 
         {activeSymbol && (
           <div className="mb-8 space-y-4">
-            <div className="flex flex-wrap gap-2">
-              {streamablePairs.map((pair) => (
-                <Button
-                  key={pair.id}
-                  size="sm"
-                  variant={pair.symbol === activeSymbol ? "default" : "outline"}
-                  className="font-mono text-xs"
-                  onClick={() => setSelectedSymbol(pair.symbol)}
-                >
-                  {pair.symbol}
-                </Button>
-              ))}
+            <div className="flex flex-col gap-3 rounded-xl border border-border/50 bg-surface/40 p-4 sm:flex-row sm:items-end">
+              <div className="flex-1 space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Ativo</label>
+                <AssetSelector
+                  assets={streamablePairs.map((p) => ({
+                    symbol: p.symbol,
+                    name: (p as any).name ?? null,
+                    category: (p as any).category ?? null,
+                  }))}
+                  value={activeSymbol}
+                  onChange={setSelectedSymbol}
+                  className="sm:w-full"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Timeframe</label>
+                <TimeframeSelector value={timeframe} onChange={setTimeframe} />
+              </div>
             </div>
-            <ChartDisplay
-              symbol={activeSymbol}
-              timeframe={timeframe}
-              onTimeframeChange={setTimeframe}
-            />
+            <ChartDisplay symbol={activeSymbol} timeframe={timeframe} />
           </div>
         )}
 

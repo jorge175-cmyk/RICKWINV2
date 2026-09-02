@@ -10,18 +10,15 @@ import {
 } from "recharts";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { TIMEFRAME_LIST } from "@/lib/iqoption/mapping";
 import { useIqOptionStream } from "@/lib/iqoption/useIqOptionStream";
 import { Activity, Radio } from "lucide-react";
 
 interface ChartDisplayProps {
   symbol: string;
   timeframe: string;
-  onTimeframeChange: (timeframe: string) => void;
 }
 
-export function ChartDisplay({ symbol, timeframe, onTimeframeChange }: ChartDisplayProps) {
+export function ChartDisplay({ symbol, timeframe }: ChartDisplayProps) {
   const { data, currentPrice, isLive, status, error } = useIqOptionStream(symbol, timeframe);
 
   const chartData = useMemo(
@@ -63,15 +60,9 @@ export function ChartDisplay({ symbol, timeframe, onTimeframeChange }: ChartDisp
             {currentPrice != null ? currentPrice.toFixed(5) : "—"}
           </p>
         </div>
-        <Tabs value={timeframe} onValueChange={onTimeframeChange}>
-          <TabsList className="bg-surface">
-            {TIMEFRAME_LIST.map((tf) => (
-              <TabsTrigger key={tf} value={tf} className="font-mono text-xs">
-                {tf}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
+        <Badge variant="outline" className="self-start font-mono text-xs sm:self-auto">
+          {timeframe}
+        </Badge>
       </CardHeader>
       <CardContent>
         {error && <p className="mb-2 text-xs text-muted-foreground">{error}</p>}
