@@ -50,3 +50,22 @@ export const getUserProfile = createServerFn({ method: "GET" })
     if (error) throw error;
     return data || { full_name: null, plan: null, timezone: null };
   });
+
+export const getWinRate = createServerFn({ method: "GET" }).handler(async () => {
+  const { createClient } = await import("@supabase/supabase-js");
+  const supabasePublic = createClient(
+    process.env['SUPABASE_URL']!,
+    process.env['SUPABASE_PUBLISHABLE_KEY']!,
+    {
+      auth: { storage: undefined, persistSession: false, autoRefreshToken: false },
+    },
+  );
+  const { data: results, error } = await supabasePublic
+    .from("signal_results")
+    .select("result")
+    .gte("verified_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString());
+  if (error) throw error;
+  if (!results || results.length === 0) return { winRate: null, total: 0 };
+  const wins = results.filter((r) => r.result === "win").length;
+  return { winRate: Math.round((wins / results.length) * 100), total: results.length };
+});
