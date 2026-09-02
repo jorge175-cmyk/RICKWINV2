@@ -53,7 +53,21 @@ function formatTime(value: string | null | undefined) {
   if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const sameDay = date.toDateString() === new Date().toDateString();
+  return sameDay ? time : `${date.toLocaleDateString([], { day: "2-digit", month: "2-digit" })} ${time}`;
+}
+
+function relativeTime(value: string | null | undefined) {
+  if (!value) return null;
+  const diff = Date.now() - new Date(value).getTime();
+  if (Number.isNaN(diff)) return null;
+  const min = Math.floor(diff / 60_000);
+  if (min < 1) return "agora";
+  if (min < 60) return `há ${min} min`;
+  const hours = Math.floor(min / 60);
+  if (hours < 24) return `há ${hours} h`;
+  return `há ${Math.floor(hours / 24)} d`;
 }
 
 function expiryTime(createdAt: string | null | undefined, minutes: number | null | undefined) {
@@ -62,6 +76,12 @@ function expiryTime(createdAt: string | null | undefined, minutes: number | null
   if (Number.isNaN(date.getTime())) return null;
   return new Date(date.getTime() + minutes * 60_000).toISOString();
 }
+
+function isExpired(createdAt: string | null | undefined, minutes: number | null | undefined) {
+  const expiry = expiryTime(createdAt, minutes);
+  return expiry ? new Date(expiry).getTime() < Date.now() : false;
+}
+
 
 function TradingSignalsPage() {
   const { user } = useAuth();
