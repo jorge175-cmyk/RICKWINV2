@@ -13,6 +13,9 @@ import { ChartDisplay } from "@/components/trading/ChartDisplay";
 import { AssetSelector } from "@/components/trading/AssetSelector";
 import { TimeframeSelector } from "@/components/trading/TimeframeSelector";
 import { AnalysisPanel } from "@/components/trading/AnalysisPanel";
+import { StrengthGauge } from "@/components/trading/StrengthGauge";
+import cardTexture from "@/assets/card-texture.jpg";
+import cardFlow from "@/assets/card-flow.jpg";
 import { getIqOptionName } from "@/lib/iqoption/mapping";
 import { useKeepWarm } from "@/lib/iqoption/useIqOptionStream";
 import { ArrowUp, ArrowDown, Clock, TrendingUp, Zap, Star, LogOut, User } from "lucide-react";
@@ -160,44 +163,53 @@ function TradingSignalsPage() {
 
       <main className="mx-auto max-w-7xl px-4 py-8">
         <div className="mb-8 grid gap-6 md:grid-cols-3">
-          <Card className="glass-panel border-border/50">
-            <CardHeader className="pb-2">
-              <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-                <TrendingUp className="h-4 w-4" /> Active Signals
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="font-display text-3xl font-bold text-foreground">
-                {signals.filter((s) => s.status === "active").length}
-              </p>
-            </CardContent>
-          </Card>
-          <Card className="glass-panel border-border/50">
-            <CardHeader className="pb-2">
-              <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-                <Star className="h-4 w-4" /> Win Rate
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="font-display text-3xl font-bold text-call">
-                {winRate?.winRate != null ? `${winRate.winRate}%` : "—"}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {winRate?.total ? `from ${winRate.total} verified trades (30d)` : "No verified trades yet"}
-              </p>
-            </CardContent>
-          </Card>
-          <Card className="glass-panel border-border/50">
-            <CardHeader className="pb-2">
-              <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-                <Clock className="h-4 w-4" /> Markets Open
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="font-display text-3xl font-bold text-foreground">24/7</p>
-            </CardContent>
-          </Card>
+          {[
+            {
+              icon: TrendingUp,
+              label: "Active Signals",
+              value: String(signals.filter((s) => s.status === "active").length),
+              caption: `${signals.length} sinais no histórico recente`,
+              image: cardTexture,
+              tone: "from-primary/25 via-primary/5 to-transparent",
+            },
+            {
+              icon: Star,
+              label: "Win Rate",
+              value: winRate?.winRate != null ? `${winRate.winRate}%` : "—",
+              caption: winRate?.total ? `${winRate.total} trades verificados (30d)` : "Sem trades verificados",
+              image: cardFlow,
+              tone: "from-call/20 via-accent/10 to-transparent",
+              accent: "text-call",
+            },
+            {
+              icon: Clock,
+              label: "Markets Open",
+              value: "24/7",
+              caption: "Forex, cripto e OTC monitorados",
+              image: cardFlow,
+              tone: "from-accent/25 via-primary/10 to-transparent",
+            },
+          ].map((stat) => (
+            <Card key={stat.label} className="relative overflow-hidden border-border/50 glass-panel">
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-0 bg-cover bg-center opacity-[0.14]"
+                style={{ backgroundImage: `url(${stat.image})` }}
+              />
+              <div aria-hidden className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${stat.tone}`} />
+              <CardHeader className="relative pb-2">
+                <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+                  <stat.icon className="h-4 w-4" /> {stat.label}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="relative">
+                <p className={`font-display text-3xl font-bold ${stat.accent ?? "text-foreground"}`}>{stat.value}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{stat.caption}</p>
+              </CardContent>
+            </Card>
+          ))}
         </div>
+
 
         {activeSymbol && (
           <div className="mb-8 space-y-4">
@@ -256,9 +268,24 @@ function TradingSignalsPage() {
             return (
               <Card
                 key={signal.id}
-                className="glass-panel border-border/50 transition-all hover:border-primary/30 hover:shadow-glow"
+                className="relative overflow-hidden border-border/50 glass-panel transition-all hover:border-primary/40 hover:shadow-glow"
               >
-                <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute inset-0 bg-cover bg-center opacity-[0.1]"
+                  style={{ backgroundImage: `url(${cardTexture})` }}
+                />
+                <div
+                  aria-hidden
+                  className={`pointer-events-none absolute inset-0 bg-gradient-to-r ${
+                    isCall ? "from-call/15" : "from-put/15"
+                  } via-transparent to-primary/10`}
+                />
+                <span
+                  aria-hidden
+                  className={`absolute inset-y-0 left-0 w-1 ${isCall ? "bg-call" : "bg-put"}`}
+                />
+                <CardContent className="relative flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-start gap-4">
                     <div
                       className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${
@@ -310,9 +337,13 @@ function TradingSignalsPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-3 sm:flex-col sm:items-end">
-                    <span className={`font-display text-xl font-bold ${isCall ? "text-call" : "text-put"}`}>
-                      {isCall ? "CALL" : "PUT"}
-                    </span>
+                    <StrengthGauge
+                      signed
+                      value={(signal.confidence ?? 0) * (isCall ? 1 : -1)}
+                      label={isCall ? "Força CALL" : "Força PUT"}
+                      display={signal.confidence ? `${signal.confidence}%` : "—"}
+                      size={116}
+                    />
                     <Button
                       size="sm"
                       className={`gap-1 ${
