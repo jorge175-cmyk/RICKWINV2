@@ -1,6 +1,13 @@
 // Global candle store: keeps candles and raw quotes alive per asset/timeframe
 // even when no component is rendering them, so analysis remains stateful.
 import { analyseTicks, type Tick, type TickAnalysis } from "@/lib/analysis/tick";
+import {
+  createDominanceState,
+  sampleDominance,
+  summariseDominance,
+  type CandleDominance,
+  type DominanceState,
+} from "@/lib/analysis/candleDominance";
 import { getCandles } from "./candles.functions";
 import { bucketStart, type CandleData } from "./mapping";
 import {
@@ -18,11 +25,16 @@ const FRESHNESS_INTERVAL_MS = 30_000;
 const POLL_INTERVAL_MS = 5_000;
 const QUOTE_FALLBACK_INTERVAL_MS = 2_000;
 const QUOTE_FALLBACK_COUNT = 120;
+const ROLLOVER_INTERVAL_MS = 1_000;
 
 export interface CandleSnapshot {
   candles: CandleData[];
   currentPrice: number | null;
   tickAnalysis: TickAnalysis | null;
+  /** HFT dominance accumulated inside the candle currently forming */
+  liveDominance: CandleDominance | null;
+  /** consolidated dominance of the last candle that closed */
+  closedDominance: CandleDominance | null;
   isLive: boolean;
   status: StreamStatus;
   error?: string | undefined;
@@ -40,8 +52,11 @@ interface Entry {
   historyLoaded: boolean;
   historyPromise: Promise<void> | null;
   lastTickAt: number;
+  dominance: DominanceState | null;
+  closedDominance: CandleDominance | null;
   error?: string | undefined;
 }
+
 
 interface QuoteBuffer {
   ticks: Tick[];
