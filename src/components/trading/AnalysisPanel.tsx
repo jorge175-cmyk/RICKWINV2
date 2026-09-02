@@ -281,6 +281,53 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
           </section>
         )}
 
+        {qualifies && (
+          <section
+            className="relative overflow-hidden rounded-xl border border-accent/30 bg-surface/50 p-4 backdrop-blur-sm"
+            aria-label="Veredito final DeepSeek"
+          >
+            <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-r from-accent/15 via-transparent to-primary/10" />
+            <div className="relative space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  <BrainCircuit className="h-4 w-4 text-accent" /> Veredito final — DeepSeek
+                </p>
+                {aiLoading && <Badge variant="secondary" className="gap-1"><RefreshCw className="h-3 w-3 animate-spin" /> analisando</Badge>}
+                {ai && (
+                  <div className="flex items-center gap-2">
+                    <Badge
+                      className={
+                        ai.verdict === "CONFIRMAR"
+                          ? "bg-call/20 text-call"
+                          : ai.verdict === "INVERTER"
+                            ? "bg-put/20 text-put"
+                            : "bg-surface-elevated text-muted-foreground"
+                      }
+                    >
+                      {ai.verdict}
+                    </Badge>
+                    <Badge variant="outline" className="font-mono">{ai.direction ?? "—"} · {ai.confidence}%</Badge>
+                  </div>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Sinal local {finalDirection} {finalConfidence}% enviado ao DeepSeek para validação da próxima vela.
+              </p>
+              {ai?.reasoning && <p className="text-sm text-foreground">{ai.reasoning}</p>}
+              {ai && ai.risks.length > 0 && (
+                <ul className="space-y-1 text-xs text-muted-foreground">
+                  {ai.risks.map((risk) => (
+                    <li key={risk} className="flex gap-2"><span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />{risk}</li>
+                  ))}
+                </ul>
+              )}
+              {aiError && <p className="text-xs text-muted-foreground">{aiError}</p>}
+            </div>
+          </section>
+        )}
+
+
+
         {asset && message && <p className="text-sm text-muted-foreground">{message}</p>}
         {asset && !message && !result && (
           <p className="text-sm text-muted-foreground">Calculando tendência, RSI, padrões de candle e confirmação multi-timeframe…</p>
