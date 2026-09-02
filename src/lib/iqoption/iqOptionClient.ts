@@ -130,6 +130,12 @@ class IqOptionClient {
         params: { routingFilters: { active_id: activeId, size: sizeSeconds } },
       },
     });
+    // Raw quotes are intentionally subscribed separately: candle updates are
+    // aggregated by the upstream, while quotes arrive on every market tick.
+    this.sendFrame({
+      name: "subscribeMessage",
+      msg: { name: "quotation", params: { routingFilters: { active_id: activeId } } },
+    });
   }
 
   private sendUnsubscribe(asset: string, sizeSeconds: number) {
@@ -141,6 +147,10 @@ class IqOptionClient {
         name: "candle-generated",
         params: { routingFilters: { active_id: activeId, size: sizeSeconds } },
       },
+    });
+    this.sendFrame({
+      name: "unsubscribeMessage",
+      msg: { name: "quotation", params: { routingFilters: { active_id: activeId } } },
     });
   }
 
