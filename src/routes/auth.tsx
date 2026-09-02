@@ -12,6 +12,7 @@ import { Zap, Mail, Lock, Loader2, Chrome } from "lucide-react";
 import { lovable } from "@/integrations/lovable";
 
 export const Route = createFileRoute("/auth")({
+  ssr: false,
   beforeLoad: async () => {
     const { data } = await supabase.auth.getUser();
     if (data.user) throw redirect({ to: "/trading" });
