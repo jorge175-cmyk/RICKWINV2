@@ -156,7 +156,7 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
               <div className="rounded-lg border border-border/50 bg-surface/50 p-3 text-xs">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="font-medium text-muted-foreground">
-                    {closedDominance ? "Resultado da última vela fechada" : "Dominância na vela em formação"}
+                    {closedDominance ? "Resultado HFT + indicadores da última vela" : "Dominância HFT na vela em formação"}
                   </p>
                   <Badge variant={closedDominance ? "default" : "outline"}>
                     {closedDominance ? "consolidado" : "monitorando"}
@@ -164,12 +164,17 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-foreground">
                   <span>{(closedDominance ?? liveDominance)?.dominant ?? "AGUARDAR"}</span>
-                  <span>{(closedDominance ?? liveDominance)?.dominancePct ?? 0}% de dominância</span>
+                  <span>{(closedDominance ?? liveDominance)?.dominancePct ?? 0}% frequência dominante</span>
                   <span>{(closedDominance ?? liveDominance)?.callSamples ?? 0} CALL · {(closedDominance ?? liveDominance)?.putSamples ?? 0} PUT</span>
                 </div>
-                {closedDominance && (
+                {(closedDominance ?? liveDominance) && (
                   <p className="mt-2 text-muted-foreground">
-                    {fused?.agreement === "confluente" ? "HFT e indicadores confirmados" : fused?.agreement === "divergente" ? "HFT divergiu dos indicadores" : "Confluência parcial"} · próxima entrada avaliada após o fechamento.
+                    Média {(closedDominance ?? liveDominance)?.avgTickRate} ticks/s · pico {(closedDominance ?? liveDominance)?.peakTickRate} · força média {(closedDominance ?? liveDominance)?.netStrength}%
+                  </p>
+                )}
+                {closedDominance && (
+                  <p className="mt-1 text-muted-foreground">
+                    {fused?.agreement === "confluente" ? "HFT e indicadores confirmados" : fused?.agreement === "divergente" ? "HFT divergiu dos indicadores" : "Confluência parcial"} · entrada definida para a próxima vela.
                   </p>
                 )}
               </div>

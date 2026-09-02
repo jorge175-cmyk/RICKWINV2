@@ -273,7 +273,9 @@ class CandleStore {
     if (!analysis) return;
     const candleTime = bucketStart(Math.floor(timeMs / 1_000), entry.sizeSeconds);
     if (!entry.dominance || candleTime > entry.dominance.candleTime) {
-      if (entry.dominance) entry.closedDominance = summariseDominance(entry.dominance, true);
+      if (entry.dominance && entry.dominance.samples > 0) {
+        entry.closedDominance = summariseDominance(entry.dominance, true);
+      }
       entry.dominance = createDominanceState(candleTime, entry.sizeSeconds);
     } else if (candleTime < entry.dominance.candleTime) {
       return;
@@ -288,7 +290,9 @@ class CandleStore {
       if (!entry.dominance) {
         entry.dominance = createDominanceState(candleTime, entry.sizeSeconds);
       } else if (candleTime > entry.dominance.candleTime) {
-        entry.closedDominance = summariseDominance(entry.dominance, true);
+        if (entry.dominance.samples > 0) {
+          entry.closedDominance = summariseDominance(entry.dominance, true);
+        }
         entry.dominance = createDominanceState(candleTime, entry.sizeSeconds);
       }
       if (entry.listeners.size > 0) this.emit(entry);
