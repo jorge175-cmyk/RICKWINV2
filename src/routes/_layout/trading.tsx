@@ -26,6 +26,10 @@ export const Route = createFileRoute("/_layout/trading")({
         queryKey: ["profile"],
         queryFn: getUserProfile,
       }),
+      queryClient.ensureQueryData({
+        queryKey: ["winRate"],
+        queryFn: getWinRate,
+      }),
     ]);
   },
   component: TradingSignalsPage,
