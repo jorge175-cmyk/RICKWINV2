@@ -13,6 +13,9 @@ import {
   Timer,
   Waves,
 } from "lucide-react";
+import chartTexture from "@/assets/card-texture.jpg";
+import flowTexture from "@/assets/card-flow.jpg";
+import { StrengthGauge } from "@/components/trading/StrengthGauge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
