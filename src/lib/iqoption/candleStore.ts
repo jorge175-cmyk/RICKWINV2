@@ -78,6 +78,7 @@ class CandleStore {
   private timersStarted = false;
   private freshnessTimer: ReturnType<typeof setInterval> | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private dominanceTimer: ReturnType<typeof setInterval> | null = null;
   private quoteEmitFrame: number | null = null;
   private dirtyQuoteAssets = new Set<string>();
 
@@ -384,6 +385,10 @@ class CandleStore {
       void this.pollQuoteFallback();
     }, QUOTE_FALLBACK_INTERVAL_MS);
     void this.pollQuoteFallback();
+
+    // Close the HFT accumulator on the exact timeframe boundary, even if the
+    // provider sends no quote at that instant.
+    this.dominanceTimer = setInterval(() => this.rolloverDominance(), ROLLOVER_INTERVAL_MS);
   }
 
   private quoteFallbackTimer: ReturnType<typeof setInterval> | null = null;
@@ -453,12 +458,14 @@ class CandleStore {
   private stopTimers() {
     if (this.freshnessTimer) clearInterval(this.freshnessTimer);
     if (this.pollTimer) clearInterval(this.pollTimer);
+    if (this.dominanceTimer) clearInterval(this.dominanceTimer);
     if (this.quoteFallbackTimer) clearInterval(this.quoteFallbackTimer);
     if (this.quoteEmitFrame != null && typeof window !== "undefined") {
       window.cancelAnimationFrame(this.quoteEmitFrame);
     }
     this.freshnessTimer = null;
     this.pollTimer = null;
+    this.dominanceTimer = null;
     this.quoteFallbackTimer = null;
     this.quoteEmitFrame = null;
     this.dirtyQuoteAssets.clear();
