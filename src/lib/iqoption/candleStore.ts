@@ -95,6 +95,8 @@ class CandleStore {
         historyLoaded: false,
         historyPromise: null,
         lastTickAt: 0,
+        dominance: null,
+        closedDominance: null,
       };
       this.entries.set(key, entry);
     }
@@ -119,6 +121,8 @@ class CandleStore {
       candles: entry?.candles ?? [],
       currentPrice: entry?.currentPrice ?? null,
       tickAnalysis: buffer?.analysis ?? null,
+      liveDominance: entry?.dominance ? summariseDominance(entry.dominance, false) : null,
+      closedDominance: entry?.closedDominance ?? null,
       isLive: lastActivity > 0 && Date.now() - lastActivity < 60_000,
       status: this.status,
       error: entry?.error ?? this.streamError,
