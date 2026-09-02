@@ -16,7 +16,18 @@ export interface LiveTick {
   volume: number;
 }
 
+/** Raw quote update — the highest-frequency data IQ Option publishes. */
+export interface LiveQuote {
+  asset: string;
+  /** epoch milliseconds */
+  timeMs: number;
+  value: number;
+  bid: number | null;
+  ask: number | null;
+}
+
 type TickHandler = (tick: LiveTick) => void;
+type QuoteHandler = (quote: LiveQuote) => void;
 type StatusHandler = (status: StreamStatus, error?: string) => void;
 
 const PROXY_PATH = "/api/public/iqoption-ws";
@@ -30,7 +41,9 @@ class IqOptionClient {
   private activeIds: Record<string, number> | null = null;
   private idToName = new Map<number, string>();
   private subscriptions = new Map<string, { asset: string; sizeSeconds: number; count: number }>();
+  private quoteSubscriptions = new Map<string, { asset: string; count: number }>();
   private tickHandlers = new Set<TickHandler>();
+  private quoteHandlers = new Set<QuoteHandler>();
   private statusHandlers = new Set<StatusHandler>();
   private serverTimeOffsetMs = 0;
   private lastFrameAt = 0;
@@ -55,6 +68,11 @@ class IqOptionClient {
     return () => this.tickHandlers.delete(handler);
   }
 
+  onQuote(handler: QuoteHandler) {
+    this.quoteHandlers.add(handler);
+    return () => this.quoteHandlers.delete(handler);
+  }
+
   onStatus(handler: StatusHandler) {
     this.statusHandlers.add(handler);
     handler(this.status, this.error);
@@ -68,30 +86,63 @@ class IqOptionClient {
   }
 
   async subscribe(asset: string, sizeSeconds: number) {
-    const key = `${asset}:${sizeSeconds}`;
+    const normalizedAsset = asset.toUpperCase();
+    const key = `${normalizedAsset}:${sizeSeconds}`;
     const entry = this.subscriptions.get(key);
     if (entry) {
       entry.count += 1;
       return;
     }
-    this.subscriptions.set(key, { asset, sizeSeconds, count: 1 });
+    this.subscriptions.set(key, { asset: normalizedAsset, sizeSeconds, count: 1 });
     await this.ensureConnected();
-    this.sendSubscribe(asset, sizeSeconds);
+    this.sendCandleSubscribe(normalizedAsset, sizeSeconds);
   }
 
   unsubscribe(asset: string, sizeSeconds: number) {
-    const key = `${asset}:${sizeSeconds}`;
+    const normalizedAsset = asset.toUpperCase();
+    const key = `${normalizedAsset}:${sizeSeconds}`;
     const entry = this.subscriptions.get(key);
     if (!entry) return;
     entry.count -= 1;
     if (entry.count > 0) return;
     this.subscriptions.delete(key);
-    this.sendUnsubscribe(asset, sizeSeconds);
-    if (this.subscriptions.size === 0) this.disconnect();
+    this.sendCandleUnsubscribe(normalizedAsset, sizeSeconds);
+    this.disconnectIfUnused();
+  }
+
+  async subscribeQuotes(asset: string) {
+    const normalizedAsset = asset.toUpperCase();
+    const entry = this.quoteSubscriptions.get(normalizedAsset);
+    if (entry) {
+      entry.count += 1;
+      return;
+    }
+    this.quoteSubscriptions.set(normalizedAsset, { asset: normalizedAsset, count: 1 });
+    await this.ensureConnected();
+    this.sendQuoteSubscribe(normalizedAsset);
+  }
+
+  unsubscribeQuotes(asset: string) {
+    const normalizedAsset = asset.toUpperCase();
+    const entry = this.quoteSubscriptions.get(normalizedAsset);
+    if (!entry) return;
+    entry.count -= 1;
+    if (entry.count > 0) return;
+    this.quoteSubscriptions.delete(normalizedAsset);
+    this.sendQuoteUnsubscribe(normalizedAsset);
+    this.disconnectIfUnused();
   }
 
   private activeIdFor(asset: string) {
     return this.activeIds?.[asset.toUpperCase()];
+  }
+
+  private hasSubscriptions() {
+    return this.subscriptions.size > 0 || this.quoteSubscriptions.size > 0;
+  }
+
+  private disconnectIfUnused() {
+    if (!this.hasSubscriptions()) this.disconnect();
   }
 
   private sendFrame(frame: unknown) {
@@ -102,7 +153,7 @@ class IqOptionClient {
     return false;
   }
 
-  private sendSubscribe(asset: string, sizeSeconds: number) {
+  private sendCandleSubscribe(asset: string, sizeSeconds: number) {
     const activeId = this.activeIdFor(asset);
     if (!activeId) return;
     this.sendFrame({
@@ -114,7 +165,7 @@ class IqOptionClient {
     });
   }
 
-  private sendUnsubscribe(asset: string, sizeSeconds: number) {
+  private sendCandleUnsubscribe(asset: string, sizeSeconds: number) {
     const activeId = this.activeIdFor(asset);
     if (!activeId) return;
     this.sendFrame({
@@ -122,6 +173,30 @@ class IqOptionClient {
       msg: {
         name: "candle-generated",
         params: { routingFilters: { active_id: activeId, size: sizeSeconds } },
+      },
+    });
+  }
+
+  private sendQuoteSubscribe(asset: string) {
+    const activeId = this.activeIdFor(asset);
+    if (!activeId) return;
+    this.sendFrame({
+      name: "subscribeMessage",
+      msg: {
+        name: "quote-generated",
+        params: { routingFilters: { active_id: activeId } },
+      },
+    });
+  }
+
+  private sendQuoteUnsubscribe(asset: string) {
+    const activeId = this.activeIdFor(asset);
+    if (!activeId) return;
+    this.sendFrame({
+      name: "unsubscribeMessage",
+      msg: {
+        name: "quote-generated",
+        params: { routingFilters: { active_id: activeId } },
       },
     });
   }
@@ -170,7 +245,10 @@ class IqOptionClient {
           this.reconnectAttempts = 0;
           this.setStatus("live");
           for (const { asset, sizeSeconds } of this.subscriptions.values()) {
-            this.sendSubscribe(asset, sizeSeconds);
+            this.sendCandleSubscribe(asset, sizeSeconds);
+          }
+          for (const { asset } of this.quoteSubscriptions.values()) {
+            this.sendQuoteSubscribe(asset);
           }
           this.startWatchdog();
           resolve();
@@ -183,7 +261,7 @@ class IqOptionClient {
         socket.onclose = () => {
           if (this.socket === socket) {
             this.socket = null;
-            if (this.subscriptions.size > 0) this.scheduleReconnect();
+            if (this.hasSubscriptions()) this.scheduleReconnect();
           }
         };
       });
@@ -210,22 +288,45 @@ class IqOptionClient {
       return;
     }
 
-    if (frame.name !== "candle-generated") return;
-    const msg = frame.msg as Record<string, number> | undefined;
+    const msg = frame.msg as Record<string, unknown> | undefined;
     if (!msg) return;
-    const asset = this.idToName.get(Number(msg["active_id"]));
+
+    if (["quote-generated", "quotation", "quote", "ticker"].includes(frame.name ?? "")) {
+      const activeId = Number(msg["active_id"] ?? msg["activeId"]);
+      const value = Number(msg["quote"] ?? msg["value"] ?? msg["price"] ?? msg["close"]);
+      const rawTime = Number(msg["at"] ?? msg["time"] ?? msg["timestamp"] ?? Date.now());
+      const asset = this.idToName.get(activeId);
+      if (!asset || !Number.isFinite(value)) return;
+      const timeMs = rawTime < 10_000_000_000 ? rawTime * 1000 : rawTime;
+      const bid = Number(msg["bid"] ?? msg["best_bid"]);
+      const ask = Number(msg["ask"] ?? msg["best_ask"]);
+      for (const handler of [...this.quoteHandlers]) {
+        handler({
+          asset,
+          timeMs: Number.isFinite(timeMs) ? timeMs : Date.now(),
+          value,
+          bid: Number.isFinite(bid) ? bid : null,
+          ask: Number.isFinite(ask) ? ask : null,
+        });
+      }
+      return;
+    }
+
+    if (frame.name !== "candle-generated") return;
+    const candle = msg as Record<string, number>;
+    const asset = this.idToName.get(Number(candle["active_id"]));
     if (!asset) return;
 
     for (const handler of [...this.tickHandlers]) {
       handler({
         asset,
-        sizeSeconds: Number(msg["size"]),
-        time: Number(msg["from"]),
-        open: Number(msg["open"]),
-        high: Number(msg["max"] ?? msg["high"] ?? msg["close"]),
-        low: Number(msg["min"] ?? msg["low"] ?? msg["close"]),
-        close: Number(msg["close"]),
-        volume: Number(msg["volume"] ?? 0),
+        sizeSeconds: Number(candle["size"]),
+        time: Number(candle["from"]),
+        open: Number(candle["open"]),
+        high: Number(candle["max"] ?? candle["high"] ?? candle["close"]),
+        low: Number(candle["min"] ?? candle["low"] ?? candle["close"]),
+        close: Number(candle["close"]),
+        volume: Number(candle["volume"] ?? 0),
       });
     }
   }
@@ -234,7 +335,7 @@ class IqOptionClient {
   private startWatchdog() {
     if (this.watchdog) return;
     this.watchdog = setInterval(() => {
-      if (this.subscriptions.size === 0) return;
+      if (!this.hasSubscriptions()) return;
       const stale = Date.now() - this.lastFrameAt > ZOMBIE_TIMEOUT_MS;
       if (stale || !this.socket || this.socket.readyState !== WebSocket.OPEN) {
         this.hardReconnect();
@@ -246,7 +347,7 @@ class IqOptionClient {
     this.reconnectAttempts += 1;
     const delay = Math.min(1000 * 2 ** Math.min(this.reconnectAttempts, 4), 15_000);
     setTimeout(() => {
-      if (this.subscriptions.size > 0) void this.ensureConnected();
+      if (this.hasSubscriptions()) void this.ensureConnected();
     }, delay);
   }
 
@@ -257,7 +358,7 @@ class IqOptionClient {
       /* noop */
     }
     this.socket = null;
-    if (this.subscriptions.size > 0) void this.ensureConnected();
+    if (this.hasSubscriptions()) void this.ensureConnected();
   }
 
   disconnect() {

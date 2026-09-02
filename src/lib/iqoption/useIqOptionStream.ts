@@ -5,11 +5,12 @@ import { getIqOptionName, timeframeSeconds } from "./mapping";
 const EMPTY: CandleSnapshot = {
   candles: [],
   currentPrice: null,
+  tickAnalysis: null,
   isLive: false,
   status: "idle",
 };
 
-/** Thin consumer of the global candle store. */
+/** Thin consumer of the global candle and quote store. */
 export function useIqOptionStream(symbol: string | null | undefined, timeframe: string) {
   const asset = getIqOptionName(symbol);
   const sizeSeconds = timeframeSeconds(timeframe);
@@ -27,6 +28,7 @@ export function useIqOptionStream(symbol: string | null | undefined, timeframe: 
   return {
     data: snapshot.candles,
     currentPrice: snapshot.currentPrice,
+    tickAnalysis: snapshot.tickAnalysis,
     isLive: snapshot.isLive,
     status: snapshot.status,
     error: snapshot.error,
