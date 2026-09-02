@@ -43,6 +43,7 @@ class IqOptionClient {
   private idToName = new Map<number, string>();
   private subscriptions = new Map<string, { asset: string; sizeSeconds: number; count: number }>();
   private tickHandlers = new Set<TickHandler>();
+  private quoteHandlers = new Set<QuoteHandler>();
   private statusHandlers = new Set<StatusHandler>();
   private serverTimeOffsetMs = 0;
   private lastFrameAt = 0;
