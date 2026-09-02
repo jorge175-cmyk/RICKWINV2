@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { ChartDisplay } from "@/components/trading/ChartDisplay";
 import { AssetSelector } from "@/components/trading/AssetSelector";
 import { TimeframeSelector } from "@/components/trading/TimeframeSelector";
+import { AnalysisPanel } from "@/components/trading/AnalysisPanel";
 import { getIqOptionName } from "@/lib/iqoption/mapping";
 import { useKeepWarm } from "@/lib/iqoption/useIqOptionStream";
 import { ArrowUp, ArrowDown, Clock, TrendingUp, Zap, Star, LogOut, User } from "lucide-react";
@@ -220,6 +221,7 @@ function TradingSignalsPage() {
               </div>
             </div>
             <ChartDisplay symbol={activeSymbol} timeframe={timeframe} />
+            <AnalysisPanel symbol={activeSymbol} timeframe={timeframe} />
           </div>
         )}
 
