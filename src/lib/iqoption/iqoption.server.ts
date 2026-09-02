@@ -159,6 +159,21 @@ export async function getActiveIdMap(): Promise<Record<string, number>> {
     return result;
   });
 
+  // IQ Option names carry suffixes (-OP for options FX, -OTC for weekend
+  // synthetic markets). Expose plain base names too, preferring live markets.
+  const SUFFIX_PRIORITY = ["", "-OP", "-OTC"];
+  for (const name of Object.keys(map)) {
+    const base = name.replace(/-(OP|OTC|L)$/, "");
+    if (base === name || map[base]) continue;
+    for (const suffix of SUFFIX_PRIORITY) {
+      const candidate = map[`${base}${suffix}`];
+      if (candidate) {
+        map[base] = candidate;
+        break;
+      }
+    }
+  }
+
   activeIdCache = { map, expiresAt: Date.now() + 60 * 60 * 1000 };
   return map;
 }
