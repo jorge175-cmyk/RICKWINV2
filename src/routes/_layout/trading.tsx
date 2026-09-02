@@ -249,6 +249,8 @@ function TradingSignalsPage() {
           {filteredSignals.map((signal) => {
             const pair = pairById(signal.pair_id);
             const isCall = signal.direction === "CALL";
+            const expired = signal.status === "active" && isExpired(signal.created_at, signal.expiration_minutes);
+            const shownStatus = expired ? "expired" : signal.status;
             return (
               <Card
                 key={signal.id}
@@ -269,12 +271,13 @@ function TradingSignalsPage() {
                           {pair?.symbol || "—"}
                         </h3>
                         <Badge
-                          variant={signal.status === "active" ? "default" : "secondary"}
+                          variant={shownStatus === "active" ? "default" : "secondary"}
                           className={`text-[10px] uppercase ${
-                            signal.status === "active" ? "bg-primary/20 text-primary hover:bg-primary/30" : ""
+                            shownStatus === "active" ? "bg-primary/20 text-primary hover:bg-primary/30" : ""
                           }`}
+                          suppressHydrationWarning
                         >
-                          {signal.status}
+                          {shownStatus}
                         </Badge>
                       </div>
                       <p className="mt-1 text-sm text-muted-foreground">
@@ -283,10 +286,12 @@ function TradingSignalsPage() {
                       <div className="mt-2 flex flex-wrap gap-3 text-xs text-muted-foreground">
                         <span className="rounded-md bg-surface px-2 py-1 font-mono" suppressHydrationWarning>
                           Entrada {formatTime(signal.created_at)}
+                          {relativeTime(signal.created_at) ? ` · ${relativeTime(signal.created_at)}` : ""}
                         </span>
                         <span className="rounded-md bg-surface px-2 py-1 font-mono" suppressHydrationWarning>
                           Expira {formatTime(expiryTime(signal.created_at, signal.expiration_minutes))}
                         </span>
+
                         <span className="rounded-md bg-surface px-2 py-1 font-mono">
                           Entry {signal.entry_price?.toFixed(5) || "—"}
                         </span>
