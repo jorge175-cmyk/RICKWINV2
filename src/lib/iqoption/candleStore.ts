@@ -159,7 +159,8 @@ class CandleStore {
     iqOptionClient.onStatus((status, error) => {
       this.status = status;
       this.streamError = error;
-      this.emitAll();
+      // Defer so a synchronous status replay never lands mid-render.
+      queueMicrotask(() => this.emitAll());
     });
     iqOptionClient.onTick((tick) => this.applyTick(tick));
   }
