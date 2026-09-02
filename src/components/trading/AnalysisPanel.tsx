@@ -226,6 +226,7 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
             {!fused && tickAnalysis && tickAnalysis.warnings.length > 0 && (
               <p className="text-xs text-muted-foreground">{tickAnalysis.warnings[0]}</p>
             )}
+            </div>
           </section>
         )}
 
