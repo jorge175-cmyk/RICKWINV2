@@ -160,44 +160,53 @@ function TradingSignalsPage() {
 
       <main className="mx-auto max-w-7xl px-4 py-8">
         <div className="mb-8 grid gap-6 md:grid-cols-3">
-          <Card className="glass-panel border-border/50">
-            <CardHeader className="pb-2">
-              <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-                <TrendingUp className="h-4 w-4" /> Active Signals
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="font-display text-3xl font-bold text-foreground">
-                {signals.filter((s) => s.status === "active").length}
-              </p>
-            </CardContent>
-          </Card>
-          <Card className="glass-panel border-border/50">
-            <CardHeader className="pb-2">
-              <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-                <Star className="h-4 w-4" /> Win Rate
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="font-display text-3xl font-bold text-call">
-                {winRate?.winRate != null ? `${winRate.winRate}%` : "—"}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {winRate?.total ? `from ${winRate.total} verified trades (30d)` : "No verified trades yet"}
-              </p>
-            </CardContent>
-          </Card>
-          <Card className="glass-panel border-border/50">
-            <CardHeader className="pb-2">
-              <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-                <Clock className="h-4 w-4" /> Markets Open
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="font-display text-3xl font-bold text-foreground">24/7</p>
-            </CardContent>
-          </Card>
+          {[
+            {
+              icon: TrendingUp,
+              label: "Active Signals",
+              value: String(signals.filter((s) => s.status === "active").length),
+              caption: `${signals.length} sinais no histórico recente`,
+              image: cardTexture,
+              tone: "from-primary/25 via-primary/5 to-transparent",
+            },
+            {
+              icon: Star,
+              label: "Win Rate",
+              value: winRate?.winRate != null ? `${winRate.winRate}%` : "—",
+              caption: winRate?.total ? `${winRate.total} trades verificados (30d)` : "Sem trades verificados",
+              image: cardFlow,
+              tone: "from-call/20 via-accent/10 to-transparent",
+              accent: "text-call",
+            },
+            {
+              icon: Clock,
+              label: "Markets Open",
+              value: "24/7",
+              caption: "Forex, cripto e OTC monitorados",
+              image: cardFlow,
+              tone: "from-accent/25 via-primary/10 to-transparent",
+            },
+          ].map((stat) => (
+            <Card key={stat.label} className="relative overflow-hidden border-border/50 glass-panel">
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-0 bg-cover bg-center opacity-[0.14]"
+                style={{ backgroundImage: `url(${stat.image})` }}
+              />
+              <div aria-hidden className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${stat.tone}`} />
+              <CardHeader className="relative pb-2">
+                <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+                  <stat.icon className="h-4 w-4" /> {stat.label}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="relative">
+                <p className={`font-display text-3xl font-bold ${stat.accent ?? "text-foreground"}`}>{stat.value}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{stat.caption}</p>
+              </CardContent>
+            </Card>
+          ))}
         </div>
+
 
         {activeSymbol && (
           <div className="mb-8 space-y-4">
