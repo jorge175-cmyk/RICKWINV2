@@ -1,11 +1,25 @@
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { ArrowDown, ArrowUp, Layers, Minus, RefreshCw, Sparkles } from "lucide-react";
+import {
+  Activity,
+  ArrowDown,
+  ArrowUp,
+  Gauge,
+  Layers,
+  Minus,
+  RefreshCw,
+  Sparkles,
+  Timer,
+  Waves,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { analyzeAsset } from "@/lib/analysis/analysis.functions";
-import { getIqOptionName } from "@/lib/iqoption/mapping";
+import { secondsToNextCandle } from "@/lib/analysis/tick";
+import { getIqOptionName, timeframeSeconds } from "@/lib/iqoption/mapping";
+import { useIqOptionStream } from "@/lib/iqoption/useIqOptionStream";
 
 interface Props {
   symbol: string | null;
@@ -14,13 +28,36 @@ interface Props {
 
 const trendLabel = (t: string) => (t === "up" ? "Alta" : t === "down" ? "Baixa" : "Lateral");
 
+function formatCountdown(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
+}
+
+function ageLabel(updatedAt: number | undefined, now: number) {
+  if (!updatedAt) return "aguardando quotes";
+  const age = Math.max(0, now - updatedAt);
+  if (age < 1_000) return "agora";
+  return `há ${Math.floor(age / 1_000)}s`;
+}
+
 export function AnalysisPanel({ symbol, timeframe }: Props) {
   const asset = getIqOptionName(symbol);
   const run = useServerFn(analyzeAsset);
+  const { tickAnalysis, isLive, status } = useIqOptionStream(symbol, timeframe);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const { data, isFetching, refetch, error } = useQuery({
     queryKey: ["analysis", asset, timeframe],
-    queryFn: () => run({ data: { asset: asset!, timeframe: timeframe as "M1" | "M5" | "M15" } }),
+    queryFn: () => {
+      if (!asset) return Promise.resolve({ result: null, error: "Selecione um ativo disponível." });
+      return run({ data: { asset, timeframe: timeframe as "M1" | "M5" | "M15" } });
+    },
     enabled: !!asset,
     staleTime: 30_000,
     refetchInterval: 60_000,
@@ -29,12 +66,15 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
   const result = data?.result ?? null;
   const message = data?.error ?? (error ? "Análise indisponível." : null);
   const direction = result?.direction;
+  const tickDirection = tickAnalysis?.bias;
+  const countdown = secondsToNextCandle(now, timeframeSeconds(timeframe));
+  const tickStrength = tickAnalysis?.windows[0]?.strength ?? 0;
 
   return (
     <Card className="glass-panel border-border/50">
-      <CardHeader className="flex flex-row items-center justify-between pb-3">
+      <CardHeader className="flex flex-col gap-3 pb-3 sm:flex-row sm:items-center sm:justify-between">
         <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-          <Sparkles className="h-4 w-4" /> Análise técnica — {symbol ?? "—"} · {timeframe}
+          <Sparkles className="h-4 w-4" /> Análise para a próxima vela — {symbol ?? "—"} · {timeframe}
         </CardTitle>
         <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={isFetching || !asset} className="gap-1.5">
           <RefreshCw className={`h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} />
@@ -43,13 +83,95 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
       </CardHeader>
       <CardContent className="space-y-4">
         {!asset && <p className="text-sm text-muted-foreground">Selecione um ativo disponível para análise.</p>}
+
+        {asset && (
+          <section className="space-y-3 rounded-lg border border-primary/25 bg-primary/5 p-4" aria-label="Análise de tick para a próxima vela">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  <Activity className="h-4 w-4 text-primary" /> Fluxo em tempo real
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">Entrada avaliada para a próxima vela de {timeframe}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge variant="outline" className="gap-1 font-mono">
+                  <Timer className="h-3 w-3" /> {formatCountdown(countdown)}
+                </Badge>
+                <Badge variant={isLive ? "default" : "secondary"} className="gap-1">
+                  <span className={`h-1.5 w-1.5 rounded-full ${isLive ? "bg-primary-foreground" : "bg-muted-foreground"}`} />
+                  {isLive ? "ticks ao vivo" : status === "connecting" ? "conectando" : "aguardando dados"}
+                </Badge>
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-[auto_1fr] sm:items-center">
+              <div
+                className={`flex items-center gap-2 rounded-lg px-4 py-3 font-display text-lg font-bold ${
+                  tickDirection === "CALL"
+                    ? "bg-call/15 text-call"
+                    : tickDirection === "PUT"
+                      ? "bg-put/15 text-put"
+                      : "bg-surface text-muted-foreground"
+                }`}
+              >
+                {tickDirection === "CALL" ? <ArrowUp className="h-5 w-5" /> : tickDirection === "PUT" ? <ArrowDown className="h-5 w-5" /> : <Minus className="h-5 w-5" />}
+                {tickDirection ?? "AGUARDAR"}
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                <div className="rounded-md bg-surface/70 px-3 py-2">
+                  <p className="text-muted-foreground">Confiança</p>
+                  <p className="mt-1 font-mono font-bold text-foreground">{tickAnalysis ? `${tickAnalysis.confidence}%` : "—"}</p>
+                </div>
+                <div className="rounded-md bg-surface/70 px-3 py-2">
+                  <p className="text-muted-foreground">Força 3s</p>
+                  <p className={`mt-1 font-mono font-bold ${tickStrength > 0 ? "text-call" : tickStrength < 0 ? "text-put" : "text-foreground"}`}>
+                    {tickAnalysis ? `${tickStrength > 0 ? "+" : ""}${tickStrength}%` : "—"}
+                  </p>
+                </div>
+                <div className="rounded-md bg-surface/70 px-3 py-2">
+                  <p className="text-muted-foreground">Ticks</p>
+                  <p className="mt-1 font-mono font-bold text-foreground">{tickAnalysis?.tickCount ?? "—"}</p>
+                </div>
+                <div className="rounded-md bg-surface/70 px-3 py-2">
+                  <p className="text-muted-foreground">Atualização</p>
+                  <p className="mt-1 font-mono font-bold text-foreground">{ageLabel(tickAnalysis?.updatedAt, now)}</p>
+                </div>
+              </div>
+            </div>
+
+            {tickAnalysis && (
+              <div className="grid gap-3 border-t border-border/50 pt-3 text-xs sm:grid-cols-3">
+                <div className="space-y-1.5">
+                  <p className="flex items-center gap-1 font-medium text-muted-foreground"><Gauge className="h-3.5 w-3.5" /> HFT / microestrutura</p>
+                  <p className="font-mono text-foreground">{tickAnalysis.hft.tickRate.toFixed(1)} ticks/s · {tickAnalysis.hft.acceleration.toFixed(1)}× ritmo</p>
+                  <p className="text-muted-foreground">Streak {tickAnalysis.hft.streak > 0 ? "+" : ""}{tickAnalysis.hft.streak} · agressão {tickAnalysis.hft.aggression}%</p>
+                </div>
+                <div className="space-y-1.5">
+                  <p className="flex items-center gap-1 font-medium text-muted-foreground"><Waves className="h-3.5 w-3.5" /> Pressão</p>
+                  <p className="font-mono text-foreground">3s {tickAnalysis.windows[0]?.strength ?? 0}% · 15s {tickAnalysis.windows[1]?.strength ?? 0}%</p>
+                  <p className="text-muted-foreground">60s {tickAnalysis.windows[2]?.strength ?? 0}% · volatilidade {tickAnalysis.hft.microVolBps.toFixed(2)} bps</p>
+                </div>
+                <div className="space-y-1.5">
+                  <p className="flex items-center gap-1 font-medium text-muted-foreground"><Layers className="h-3.5 w-3.5" /> POC / valor</p>
+                  <p className="font-mono text-foreground">POC {tickAnalysis.poc.poc?.toFixed(5) ?? "—"}</p>
+                  <p className="text-muted-foreground">{tickAnalysis.poc.insideValueArea ? "Dentro" : "Fora"} da área · {tickAnalysis.poc.distanceBps.toFixed(1)} bps</p>
+                </div>
+              </div>
+            )}
+
+            {tickAnalysis && tickAnalysis.warnings.length > 0 && (
+              <p className="text-xs text-muted-foreground">{tickAnalysis.warnings[0]}</p>
+            )}
+          </section>
+        )}
+
         {asset && message && <p className="text-sm text-muted-foreground">{message}</p>}
         {asset && !message && !result && (
-          <p className="text-sm text-muted-foreground">Calculando confluência de tendência, RSI e padrões…</p>
+          <p className="text-sm text-muted-foreground">Calculando tendência, RSI, padrões de candle e confirmação multi-timeframe…</p>
         )}
 
         {result && (
-          <>
+          <section className="space-y-4 border-t border-border/50 pt-4" aria-label="Análise técnica de candles">
             <div className="flex flex-wrap items-center gap-4">
               <div
                 className={`flex items-center gap-2 rounded-xl px-4 py-2 font-display text-lg font-bold ${
@@ -60,13 +182,7 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
                       : "bg-surface text-muted-foreground"
                 }`}
               >
-                {direction === "CALL" ? (
-                  <ArrowUp className="h-5 w-5" />
-                ) : direction === "PUT" ? (
-                  <ArrowDown className="h-5 w-5" />
-                ) : (
-                  <Minus className="h-5 w-5" />
-                )}
+                {direction === "CALL" ? <ArrowUp className="h-5 w-5" /> : direction === "PUT" ? <ArrowDown className="h-5 w-5" /> : <Minus className="h-5 w-5" />}
                 {direction ?? "AGUARDAR"}
               </div>
               <div>
@@ -74,24 +190,11 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
                 <p className="text-xs text-muted-foreground">confiança da confluência</p>
               </div>
               <div className="flex flex-wrap gap-2 text-xs">
-                <Badge variant="secondary" className="font-mono">
-                  RSI {result.metrics.rsi?.toFixed(1) ?? "—"}
-                </Badge>
-                <Badge variant="secondary">
-                  {timeframe}: {trendLabel(result.metrics.trend)}
-                </Badge>
-                <Badge variant="secondary" className="gap-1">
-                  <Layers className="h-3 w-3" />
-                  {result.higherTimeframe}: {trendLabel(result.metrics.higherTrend)}
-                </Badge>
-                {result.entryPrice != null && (
-                  <Badge variant="secondary" className="font-mono">
-                    Preço {result.entryPrice.toFixed(5)}
-                  </Badge>
-                )}
-                {direction && (
-                  <Badge variant="secondary">Expiração {result.expirationMinutes} min</Badge>
-                )}
+                <Badge variant="secondary" className="font-mono">RSI {result.metrics.rsi?.toFixed(1) ?? "—"}</Badge>
+                <Badge variant="secondary">{timeframe}: {trendLabel(result.metrics.trend)}</Badge>
+                <Badge variant="secondary" className="gap-1"><Layers className="h-3 w-3" />{result.higherTimeframe}: {trendLabel(result.metrics.higherTrend)}</Badge>
+                {result.entryPrice != null && <Badge variant="secondary" className="font-mono">Preço {result.entryPrice.toFixed(5)}</Badge>}
+                {direction && <Badge variant="secondary">Expiração {result.expirationMinutes} min</Badge>}
               </div>
             </div>
 
@@ -100,10 +203,7 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
             {result.reasons.length > 0 && (
               <ul className="space-y-1.5 text-xs text-muted-foreground">
                 {result.reasons.map((reason) => (
-                  <li key={reason} className="flex gap-2">
-                    <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
-                    {reason}
-                  </li>
+                  <li key={reason} className="flex gap-2"><span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />{reason}</li>
                 ))}
               </ul>
             )}
@@ -111,14 +211,11 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
             {result.warnings.length > 0 && (
               <ul className="space-y-1.5 text-xs text-muted-foreground/80">
                 {result.warnings.map((warning) => (
-                  <li key={warning} className="flex gap-2">
-                    <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/50" />
-                    {warning}
-                  </li>
+                  <li key={warning} className="flex gap-2"><span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/50" />{warning}</li>
                 ))}
               </ul>
             )}
-          </>
+          </section>
         )}
       </CardContent>
     </Card>
