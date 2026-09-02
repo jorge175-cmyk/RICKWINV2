@@ -9,6 +9,9 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
+import { ChartDisplay } from "@/components/trading/ChartDisplay";
+import { getIqOptionName } from "@/lib/iqoption/mapping";
+import { useKeepWarm } from "@/lib/iqoption/useIqOptionStream";
 import { ArrowUp, ArrowDown, Clock, TrendingUp, Zap, Star, LogOut, User } from "lucide-react";
 
 export const Route = createFileRoute("/_layout/trading")({
@@ -63,6 +66,15 @@ function TradingSignalsPage() {
     queryFn: getWinRate,
   });
   const [filter, setFilter] = useState<"all" | "CALL" | "PUT">("all");
+  const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
+  const [timeframe, setTimeframe] = useState("M5");
+
+  const streamablePairs = pairs.filter((p) => getIqOptionName(p.symbol));
+  const activeSymbol = selectedSymbol ?? streamablePairs[0]?.symbol ?? null;
+  useKeepWarm(
+    streamablePairs.slice(0, 4).map((p) => p.symbol),
+    timeframe,
+  );
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
@@ -149,6 +161,29 @@ function TradingSignalsPage() {
             </CardContent>
           </Card>
         </div>
+
+        {activeSymbol && (
+          <div className="mb-8 space-y-4">
+            <div className="flex flex-wrap gap-2">
+              {streamablePairs.map((pair) => (
+                <Button
+                  key={pair.id}
+                  size="sm"
+                  variant={pair.symbol === activeSymbol ? "default" : "outline"}
+                  className="font-mono text-xs"
+                  onClick={() => setSelectedSymbol(pair.symbol)}
+                >
+                  {pair.symbol}
+                </Button>
+              ))}
+            </div>
+            <ChartDisplay
+              symbol={activeSymbol}
+              timeframe={timeframe}
+              onTimeframeChange={setTimeframe}
+            />
+          </div>
+        )}
 
         <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <h1 className="font-display text-2xl font-bold tracking-tight">Live Signals</h1>
