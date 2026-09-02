@@ -195,7 +195,13 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
               </div>
             )}
 
-            {tickAnalysis && tickAnalysis.warnings.length > 0 && (
+            {fused && (
+              <div className="space-y-1 border-t border-border/50 pt-3 text-xs text-muted-foreground">
+                {fused.reasons.slice(0, 2).map((reason) => <p key={reason}>{reason}</p>)}
+                {fused.warnings.slice(0, 2).map((warning) => <p key={warning}>{warning}</p>)}
+              </div>
+            )}
+            {!fused && tickAnalysis && tickAnalysis.warnings.length > 0 && (
               <p className="text-xs text-muted-foreground">{tickAnalysis.warnings[0]}</p>
             )}
           </section>
