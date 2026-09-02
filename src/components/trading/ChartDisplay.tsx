@@ -87,33 +87,33 @@ export function ChartDisplay({ symbol, timeframe, onTimeframeChange }: ChartDisp
                   <linearGradient id="candleFill" x1="0" y1="0" x2="0" y2="1">
                     <stop
                       offset="0%"
-                      stopColor={rising ? "hsl(var(--call))" : "hsl(var(--put))"}
+                      stopColor={rising ? "var(--call)" : "var(--put)"}
                       stopOpacity={0.35}
                     />
                     <stop
                       offset="100%"
-                      stopColor={rising ? "hsl(var(--call))" : "hsl(var(--put))"}
+                      stopColor={rising ? "var(--call)" : "var(--put)"}
                       stopOpacity={0}
                     />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
                 <XAxis
                   dataKey="label"
-                  tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                  tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
                   interval="preserveStartEnd"
                   minTickGap={40}
                 />
                 <YAxis
                   domain={["auto", "auto"]}
-                  tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                  tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
                   width={70}
                   tickFormatter={(value: number) => value.toFixed(5)}
                 />
                 <Tooltip
                   contentStyle={{
-                    background: "hsl(var(--card))",
-                    border: "1px solid hsl(var(--border))",
+                    background: "var(--card)",
+                    border: "1px solid var(--border)",
                     borderRadius: 12,
                     fontSize: 12,
                   }}
@@ -122,7 +122,7 @@ export function ChartDisplay({ symbol, timeframe, onTimeframeChange }: ChartDisp
                 <Area
                   type="monotone"
                   dataKey="close"
-                  stroke={rising ? "hsl(var(--call))" : "hsl(var(--put))"}
+                  stroke={rising ? "var(--call)" : "var(--put)"}
                   strokeWidth={2}
                   fill="url(#candleFill)"
                   isAnimationActive={false}
