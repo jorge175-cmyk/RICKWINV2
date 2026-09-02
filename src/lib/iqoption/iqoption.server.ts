@@ -126,6 +126,8 @@ async function withSession<T>(
   try {
     await waitOpen(socket);
     authenticate(socket, await getSsid());
+    // IQ Option drops requests sent before the session profile is delivered.
+    await waitFor((f) => f.name === "profile" && !!f.msg, 15_000);
     return await fn(send, waitFor);
   } finally {
     try {
