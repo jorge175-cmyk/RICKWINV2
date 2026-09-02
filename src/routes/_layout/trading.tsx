@@ -58,6 +58,10 @@ function TradingSignalsPage() {
     queryKey: ["profile"],
     queryFn: getUserProfile,
   });
+  const { data: winRate } = useSuspenseQuery({
+    queryKey: ["winRate"],
+    queryFn: getWinRate,
+  });
   const [filter, setFilter] = useState<"all" | "CALL" | "PUT">("all");
 
   const handleSignOut = async () => {
