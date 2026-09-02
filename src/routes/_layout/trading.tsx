@@ -88,10 +88,6 @@ function TradingSignalsPage() {
     queryKey: ["pairs"],
     queryFn: getCurrencyPairs,
   });
-  const { data: signals = [] } = useSuspenseQuery({
-    queryKey: ["signals"],
-    queryFn: getTradingSignals,
-  });
   const { data: profile } = useSuspenseQuery({
     queryKey: ["profile"],
     queryFn: getUserProfile,
@@ -100,7 +96,6 @@ function TradingSignalsPage() {
     queryKey: ["winRate"],
     queryFn: getWinRate,
   });
-  const [filter, setFilter] = useState<"all" | "CALL" | "PUT">("all");
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const [timeframe, setTimeframe] = useState("M5");
 
@@ -116,10 +111,6 @@ function TradingSignalsPage() {
     toast.success("Signed out successfully");
   };
 
-  const filteredSignals =
-    filter === "all" ? signals : signals.filter((s) => s.direction === filter);
-
-  const pairById = (id: string | null) => pairs.find((p) => p.id === id);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
