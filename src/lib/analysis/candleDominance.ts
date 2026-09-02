@@ -226,6 +226,10 @@ export function fuseDominanceWithIndicators(
   const raw = Math.round(Math.min(95, 40 + magnitude * 55));
   const direction = Math.abs(score) >= 1 ? (score > 0 ? "CALL" : "PUT") : null;
 
+  if (!direction) {
+    warnings.push("Confluência insuficiente para entrada na próxima vela.");
+  }
+
   return {
     direction,
     confidence: direction ? raw : Math.min(raw, 45),
