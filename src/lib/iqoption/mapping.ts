@@ -25,10 +25,14 @@ export function getIqOptionName(symbol: string | null | undefined): string | nul
   const raw = symbol.trim().toUpperCase();
   if (EXPLICIT_MAP[raw]) return EXPLICIT_MAP[raw];
 
-  const normalized = raw.replace(/[^A-Z]/g, "");
-  if (Object.values(EXPLICIT_MAP).includes(normalized)) return normalized;
-  // Six-letter FX-style codes are passed through (e.g. EURUSD, AUDCAD).
-  if (/^[A-Z]{6}$/.test(normalized)) return normalized;
+  // Preserve IQ Option market suffixes (-OTC weekend markets, -OP options FX).
+  const suffix = /-(OTC|OP|L)$/.exec(raw)?.[1];
+  const base = suffix ? raw.replace(/-(OTC|OP|L)$/, "") : raw;
+  const mappedBase = EXPLICIT_MAP[base] ?? base.replace(/[^A-Z]/g, "");
+  const known = Object.values(EXPLICIT_MAP).includes(mappedBase);
+  if (known || /^[A-Z]{6}$/.test(mappedBase) || (suffix && /^[A-Z]{3,10}$/.test(mappedBase))) {
+    return suffix ? `${mappedBase}-${suffix}` : mappedBase;
+  }
   return null;
 }
 

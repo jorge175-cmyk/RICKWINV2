@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useSuspenseQuery } from "@tanstack/react-query";
+import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { getCurrencyPairs, getUserProfile, getWinRate } from "@/lib/trading.functions";
@@ -14,6 +14,7 @@ import { AnalysisPanel } from "@/components/trading/AnalysisPanel";
 import cardTexture from "@/assets/card-texture.jpg";
 import cardFlow from "@/assets/card-flow.jpg";
 import { getIqOptionName } from "@/lib/iqoption/mapping";
+import { getOtcAssets } from "@/lib/iqoption/candles.functions";
 import { useKeepWarm } from "@/lib/iqoption/useIqOptionStream";
 import { Clock, TrendingUp, Zap, Star, LogOut, User } from "lucide-react";
 
@@ -66,8 +67,22 @@ function TradingSignalsPage() {
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const [timeframe, setTimeframe] = useState("M5");
 
+  const { data: otcAssets = [] } = useQuery({
+    queryKey: ["otcAssets"],
+    queryFn: () => getOtcAssets(),
+    staleTime: 30 * 60 * 1000,
+  });
+
   const streamablePairs = pairs.filter((p) => getIqOptionName(p.symbol));
-  const activeSymbol = selectedSymbol ?? streamablePairs[0]?.symbol ?? null;
+  const assetOptions = [
+    ...streamablePairs.map((p) => ({
+      symbol: p.symbol,
+      name: (p as any).name ?? null,
+      category: (p as any).category ?? null,
+    })),
+    ...otcAssets.map((a) => ({ symbol: a.symbol, name: a.name, category: a.category })),
+  ];
+  const activeSymbol = selectedSymbol ?? assetOptions[0]?.symbol ?? null;
   useKeepWarm(
     streamablePairs.slice(0, 4).map((p) => p.symbol),
     timeframe,
@@ -120,8 +135,8 @@ function TradingSignalsPage() {
             {
               icon: TrendingUp,
               label: "Pares monitorados",
-              value: String(streamablePairs.length),
-              caption: "Ativos com streaming IQ Option disponível",
+              value: String(assetOptions.length),
+              caption: `${otcAssets.length} mercados OTC da IQ Option incluídos`,
               image: cardTexture,
               tone: "from-primary/25 via-primary/5 to-transparent",
             },
@@ -170,11 +185,7 @@ function TradingSignalsPage() {
               <div className="flex-1 space-y-1.5">
                 <label className="text-xs font-medium text-muted-foreground">Ativo</label>
                 <AssetSelector
-                  assets={streamablePairs.map((p) => ({
-                    symbol: p.symbol,
-                    name: (p as any).name ?? null,
-                    category: (p as any).category ?? null,
-                  }))}
+                  assets={assetOptions}
                   value={activeSymbol}
                   onChange={setSelectedSymbol}
                   className="sm:w-full"
