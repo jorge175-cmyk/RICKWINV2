@@ -25,6 +25,34 @@ export const getCandles = createServerFn({ method: "POST" })
     }
   });
 
+export interface OtcAsset {
+  symbol: string;
+  name: string;
+  category: string;
+}
+
+/** OTC markets currently exposed by the IQ Option connection. */
+export const getOtcAssets = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async (): Promise<OtcAsset[]> => {
+    const { getActiveIdMap } = await import("./iqoption.server");
+    try {
+      const map = await getActiveIdMap();
+      return Object.keys(map)
+        .filter((name) => name.endsWith("-OTC"))
+        .map((name) => {
+          const base = name.replace(/-OTC$/, "");
+          const pretty =
+            /^[A-Z]{6}$/.test(base) ? `${base.slice(0, 3)}/${base.slice(3)}` : base;
+          return { symbol: name, name: `${pretty} OTC`, category: "OTC" };
+        })
+        .sort((a, b) => a.symbol.localeCompare(b.symbol));
+    } catch (error) {
+      console.error("[iqoption] otc asset list failed", error);
+      return [];
+    }
+  });
+
 /** Asset name -> IQ Option active_id, needed for live subscriptions. */
 export const getActiveIds = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
