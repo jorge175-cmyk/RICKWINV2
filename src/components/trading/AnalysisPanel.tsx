@@ -9,6 +9,7 @@ import {
   Gauge,
   Layers,
   Minus,
+  Power,
   RefreshCw,
   Sparkles,
   Timer,
@@ -20,6 +21,7 @@ import { StrengthGauge } from "@/components/trading/StrengthGauge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
 import { analyzeAsset } from "@/lib/analysis/analysis.functions";
 import { deepseekVerdict } from "@/lib/analysis/deepseek.functions";
 import { fuseDominanceWithIndicators } from "@/lib/analysis/candleDominance";
@@ -48,10 +50,27 @@ function ageLabel(updatedAt: number | undefined, now: number) {
   return `há ${Math.floor(age / 1_000)}s`;
 }
 
+const ACTIVE_KEY = "binarypulse:analysis-active";
+
 export function AnalysisPanel({ symbol, timeframe }: Props) {
-  const asset = getIqOptionName(symbol);
+  const [active, setActive] = useState(true);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(ACTIVE_KEY);
+    if (stored !== null) setActive(stored === "1");
+  }, []);
+
+  const toggleActive = (next: boolean) => {
+    setActive(next);
+    window.localStorage.setItem(ACTIVE_KEY, next ? "1" : "0");
+  };
+
+  const asset = active ? getIqOptionName(symbol) : null;
   const run = useServerFn(analyzeAsset);
-  const { tickAnalysis, liveDominance, closedDominance, isLive, status } = useIqOptionStream(symbol, timeframe);
+  const { tickAnalysis, liveDominance, closedDominance, isLive, status } = useIqOptionStream(
+    active ? symbol : null,
+    timeframe,
+  );
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -153,13 +172,30 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
         <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
           <Sparkles className="h-4 w-4 text-accent" /> Análise para a próxima vela — {symbol ?? "—"} · {timeframe}
         </CardTitle>
-        <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={isFetching || !asset} className="gap-1.5">
-          <RefreshCw className={`h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} />
-          <span className="hidden sm:inline">Atualizar</span>
-        </Button>
+        <div className="flex items-center gap-3">
+          <label
+            htmlFor="analysis-power"
+            className="flex cursor-pointer items-center gap-2 rounded-lg border border-border/50 bg-surface/60 px-3 py-1.5 text-xs backdrop-blur-sm"
+          >
+            <Power className={`h-3.5 w-3.5 ${active ? "text-call" : "text-muted-foreground"}`} />
+            <span className={active ? "font-medium text-foreground" : "text-muted-foreground"}>
+              {active ? "Análise ligada" : "Análise desligada"}
+            </span>
+            <Switch id="analysis-power" checked={active} onCheckedChange={toggleActive} />
+          </label>
+          <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={isFetching || !asset} className="gap-1.5">
+            <RefreshCw className={`h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} />
+            <span className="hidden sm:inline">Atualizar</span>
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="relative space-y-4">
-        {!asset && <p className="text-sm text-muted-foreground">Selecione um ativo disponível para análise.</p>}
+        {!active && (
+          <p className="text-sm text-muted-foreground">
+            Análise pausada. Nenhum tick é processado e nenhum token do DeepSeek é consumido enquanto estiver desligada.
+          </p>
+        )}
+        {active && !asset && <p className="text-sm text-muted-foreground">Selecione um ativo disponível para análise.</p>}
 
         {asset && (
           <section
