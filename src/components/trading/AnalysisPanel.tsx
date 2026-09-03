@@ -170,13 +170,30 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
         <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
           <Sparkles className="h-4 w-4 text-accent" /> Análise para a próxima vela — {symbol ?? "—"} · {timeframe}
         </CardTitle>
-        <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={isFetching || !asset} className="gap-1.5">
-          <RefreshCw className={`h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} />
-          <span className="hidden sm:inline">Atualizar</span>
-        </Button>
+        <div className="flex items-center gap-3">
+          <label
+            htmlFor="analysis-power"
+            className="flex cursor-pointer items-center gap-2 rounded-lg border border-border/50 bg-surface/60 px-3 py-1.5 text-xs backdrop-blur-sm"
+          >
+            <Power className={`h-3.5 w-3.5 ${active ? "text-call" : "text-muted-foreground"}`} />
+            <span className={active ? "font-medium text-foreground" : "text-muted-foreground"}>
+              {active ? "Análise ligada" : "Análise desligada"}
+            </span>
+            <Switch id="analysis-power" checked={active} onCheckedChange={toggleActive} />
+          </label>
+          <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={isFetching || !asset} className="gap-1.5">
+            <RefreshCw className={`h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} />
+            <span className="hidden sm:inline">Atualizar</span>
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="relative space-y-4">
-        {!asset && <p className="text-sm text-muted-foreground">Selecione um ativo disponível para análise.</p>}
+        {!active && (
+          <p className="text-sm text-muted-foreground">
+            Análise pausada. Nenhum tick é processado e nenhum token do DeepSeek é consumido enquanto estiver desligada.
+          </p>
+        )}
+        {active && !asset && <p className="text-sm text-muted-foreground">Selecione um ativo disponível para análise.</p>}
 
         {asset && (
           <section
