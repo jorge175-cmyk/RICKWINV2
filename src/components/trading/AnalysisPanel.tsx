@@ -9,6 +9,7 @@ import {
   Gauge,
   Layers,
   Minus,
+  Power,
   RefreshCw,
   Sparkles,
   Timer,
@@ -20,6 +21,7 @@ import { StrengthGauge } from "@/components/trading/StrengthGauge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
 import { analyzeAsset } from "@/lib/analysis/analysis.functions";
 import { deepseekVerdict } from "@/lib/analysis/deepseek.functions";
 import { fuseDominanceWithIndicators } from "@/lib/analysis/candleDominance";
