@@ -48,10 +48,27 @@ function ageLabel(updatedAt: number | undefined, now: number) {
   return `há ${Math.floor(age / 1_000)}s`;
 }
 
+const ACTIVE_KEY = "binarypulse:analysis-active";
+
 export function AnalysisPanel({ symbol, timeframe }: Props) {
-  const asset = getIqOptionName(symbol);
+  const [active, setActive] = useState(true);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(ACTIVE_KEY);
+    if (stored !== null) setActive(stored === "1");
+  }, []);
+
+  const toggleActive = (next: boolean) => {
+    setActive(next);
+    window.localStorage.setItem(ACTIVE_KEY, next ? "1" : "0");
+  };
+
+  const asset = active ? getIqOptionName(symbol) : null;
   const run = useServerFn(analyzeAsset);
-  const { tickAnalysis, liveDominance, closedDominance, isLive, status } = useIqOptionStream(symbol, timeframe);
+  const { tickAnalysis, liveDominance, closedDominance, isLive, status } = useIqOptionStream(
+    active ? symbol : null,
+    timeframe,
+  );
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
