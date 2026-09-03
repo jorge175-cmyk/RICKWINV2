@@ -282,7 +282,7 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
           </section>
         )}
 
-        {qualifies && (
+        {asset && (
           <section
             className="relative overflow-hidden rounded-xl border border-accent/30 bg-surface/50 p-4 backdrop-blur-sm"
             aria-label="Veredito final DeepSeek"
@@ -293,9 +293,9 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
                 <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
                   <BrainCircuit className="h-4 w-4 text-accent" /> Veredito final — DeepSeek
                 </p>
-                {aiLoading && <Badge variant="secondary" className="gap-1"><RefreshCw className="h-3 w-3 animate-spin" /> analisando</Badge>}
-                {!aiLoading && !ai && <Badge variant="outline">aguardando análise</Badge>}
-                {ai && (
+                {!qualifies && <Badge variant="outline">aguardando sinal forte</Badge>}
+                {qualifies && aiLoading && <Badge variant="secondary" className="gap-1"><RefreshCw className="h-3 w-3 animate-spin" /> analisando</Badge>}
+                {qualifies && ai && (
                   <div className="flex items-center gap-2">
                     <Badge
                       className={
@@ -313,7 +313,7 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
                 )}
               </div>
 
-              {ai && (
+              {qualifies && ai && (
                 <div className="grid gap-3 sm:grid-cols-[160px_1fr] sm:items-center">
                   <StrengthGauge
                     value={ai.confidence}
@@ -337,9 +337,14 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
                 </div>
               )}
 
-              {!ai && (
+              {qualifies && !ai && (
                 <p className="text-xs text-muted-foreground">
                   Sinal local {finalDirection} {finalConfidence}% enviado ao DeepSeek para validação da próxima vela.
+                </p>
+              )}
+              {!qualifies && (
+                <p className="text-xs text-muted-foreground">
+                  O DeepSeek será acionado quando o sinal local atingir <span className="font-medium text-foreground">{finalDirection ?? "CALL/PUT"} ≥ 80%</span> de confiança. Aguardando confluência…
                 </p>
               )}
               {aiError && <p className="text-xs text-muted-foreground">{aiError}</p>}
