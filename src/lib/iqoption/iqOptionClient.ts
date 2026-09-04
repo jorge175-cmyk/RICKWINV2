@@ -32,6 +32,7 @@ type StatusHandler = (status: StreamStatus, error?: string) => void;
 
 const PROXY_PATH = "/api/public/iqoption-ws";
 const ZOMBIE_TIMEOUT_MS = 45_000;
+const MAX_RECONNECT_DELAY_MS = 60_000;
 
 class IqOptionClient {
   private socket: WebSocket | null = null;
@@ -49,6 +50,8 @@ class IqOptionClient {
   private lastFrameAt = 0;
   private reconnectAttempts = 0;
   private watchdog: ReturnType<typeof setInterval> | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private nextReconnectAt = 0;
 
   getStatus() {
     return this.status;
@@ -269,6 +272,7 @@ class IqOptionClient {
       // No realtime channel available (e.g. local dev runtime) — consumers
       // keep working through periodic history refreshes.
       this.setStatus("polling", error instanceof Error ? error.message : "Streaming unavailable");
+      this.scheduleReconnect();
     }
   }
 
@@ -344,14 +348,19 @@ class IqOptionClient {
   }
 
   private scheduleReconnect() {
+    if (this.reconnectTimer || !this.hasSubscriptions()) return;
     this.reconnectAttempts += 1;
-    const delay = Math.min(1000 * 2 ** Math.min(this.reconnectAttempts, 4), 15_000);
-    setTimeout(() => {
+    const exponential = Math.min(2_000 * 2 ** Math.min(this.reconnectAttempts - 1, 5), MAX_RECONNECT_DELAY_MS);
+    const delay = exponential + Math.floor(Math.random() * Math.min(2_000, exponential / 4));
+    this.nextReconnectAt = Date.now() + delay;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
       if (this.hasSubscriptions()) void this.ensureConnected();
     }, delay);
   }
 
   hardReconnect() {
+    if (Date.now() < this.nextReconnectAt) return;
     try {
       this.socket?.close();
     } catch {
@@ -366,6 +375,11 @@ class IqOptionClient {
       clearInterval(this.watchdog);
       this.watchdog = null;
     }
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.nextReconnectAt = 0;
     try {
       this.socket?.close();
     } catch {

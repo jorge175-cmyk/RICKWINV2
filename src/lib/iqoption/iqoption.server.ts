@@ -224,10 +224,19 @@ async function createSharedSession(): Promise<SharedSession> {
       listeners.add(listener);
     });
 
-  await waitOpen(socket);
-  authenticate(socket, await getSsid());
-  // IQ Option drops requests sent before the session profile is delivered.
-  await waitFor((f) => f.name === "profile" && !!f.msg, 15_000);
+  try {
+    await waitOpen(socket);
+    authenticate(socket, await getSsid());
+    // IQ Option drops requests sent before the session profile is delivered.
+    await waitFor((f) => f.name === "profile" && !!f.msg, 15_000);
+  } catch (error) {
+    try {
+      socket.close();
+    } catch {
+      // already closed
+    }
+    throw error;
+  }
 
   const session: SharedSession = { socket, send, waitFor, touchedAt: Date.now() };
   const invalidate = () => {
@@ -348,7 +357,7 @@ export async function fetchCandles(
   if (!activeId) throw new Error(`Unknown IQ Option asset: ${iqName}`);
 
   const request = withSession(async (send, waitFor) => {
-    const requestId = `candles-${Date.now()}`;
+    const requestId = `candles-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     send({
       name: "sendMessage",
       request_id: requestId,

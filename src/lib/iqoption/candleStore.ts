@@ -22,8 +22,8 @@ const HISTORY_COUNT = 200;
 const MAX_INTERPOLATED_GAP = 5;
 const MAX_TICKS = 5_000;
 const FRESHNESS_INTERVAL_MS = 30_000;
-const POLL_INTERVAL_MS = 5_000;
-const QUOTE_FALLBACK_INTERVAL_MS = 2_000;
+const POLL_INTERVAL_MS = 10_000;
+const QUOTE_FALLBACK_INTERVAL_MS = 5_000;
 const QUOTE_FALLBACK_COUNT = 120;
 const ROLLOVER_INTERVAL_MS = 1_000;
 
@@ -51,6 +51,7 @@ interface Entry {
   background: boolean;
   historyLoaded: boolean;
   historyPromise: Promise<void> | null;
+  retryAfter: number;
   lastTickAt: number;
   dominance: DominanceState | null;
   closedDominance: CandleDominance | null;
@@ -95,6 +96,7 @@ class CandleStore {
         background: false,
         historyLoaded: false,
         historyPromise: null,
+        retryAfter: 0,
         lastTickAt: 0,
         dominance: null,
         closedDominance: null,
@@ -202,14 +204,20 @@ class CandleStore {
   private async loadHistory(entry: Entry, force = false) {
     if (entry.historyPromise) return entry.historyPromise;
     if (entry.historyLoaded && !force) return;
+    if (entry.retryAfter > Date.now()) return;
 
     entry.historyPromise = (async () => {
       try {
         const result = await getCandles({
           data: { asset: entry.asset, sizeSeconds: entry.sizeSeconds, count: HISTORY_COUNT },
         });
-        if (result.error) entry.error = result.error;
-        else entry.error = undefined;
+        if (result.error) {
+          entry.error = result.error;
+          entry.retryAfter = Date.now() + Math.max(result.retryAfterMs ?? POLL_INTERVAL_MS, POLL_INTERVAL_MS);
+        } else {
+          entry.error = undefined;
+          entry.retryAfter = 0;
+        }
         if (result.candles.length > 0) {
           const live = entry.candles.filter(
             (c) => c.time > (result.candles[result.candles.length - 1]?.time ?? 0),
@@ -397,6 +405,7 @@ class CandleStore {
 
   private quoteFallbackTimer: ReturnType<typeof setInterval> | null = null;
   private quoteFallbackInFlight = new Set<string>();
+  private quoteRetryAfter = new Map<string, number>();
 
   private quotesAreStreaming(asset: string) {
     const buffer = this.quoteBuffers.get(asset);
@@ -417,11 +426,17 @@ class CandleStore {
       [...assets].map(async (asset) => {
         if (this.quotesAreStreaming(asset)) return;
         if (this.quoteFallbackInFlight.has(asset)) return;
+        if ((this.quoteRetryAfter.get(asset) ?? 0) > Date.now()) return;
         this.quoteFallbackInFlight.add(asset);
         try {
           const result = await getCandles({
             data: { asset, sizeSeconds: 1, count: QUOTE_FALLBACK_COUNT },
           });
+          if (result.retryAfterMs) {
+            this.quoteRetryAfter.set(asset, Date.now() + result.retryAfterMs);
+          } else if (!result.error) {
+            this.quoteRetryAfter.delete(asset);
+          }
           if (result.candles.length === 0) return;
           const buffer = this.ensureQuoteBuffer(asset);
           const lastT = buffer.ticks[buffer.ticks.length - 1]?.t ?? 0;
@@ -475,6 +490,7 @@ class CandleStore {
     this.quoteFallbackTimer = null;
     this.quoteEmitFrame = null;
     this.dirtyQuoteAssets.clear();
+    this.quoteRetryAfter.clear();
     this.timersStarted = false;
   }
 }

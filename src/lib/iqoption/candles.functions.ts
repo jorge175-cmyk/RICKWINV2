@@ -13,14 +13,21 @@ const inputSchema = z.object({
 export const getCandles = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => inputSchema.parse(input))
-  .handler(async ({ data }): Promise<{ candles: CandleData[]; error?: string }> => {
-    const { fetchCandles } = await import("./iqoption.server");
+  .handler(async ({ data }): Promise<{ candles: CandleData[]; error?: string; retryAfterMs?: number }> => {
+    const { fetchCandles, IqOptionBackoffError } = await import("./iqoption.server");
     const count = Math.min(Math.max(data.count, 1), 500);
     try {
       const candles = await fetchCandles(data.asset, data.sizeSeconds, count);
       return { candles };
     } catch (error) {
       console.error("[iqoption] candle fetch failed", error);
+      if (error instanceof IqOptionBackoffError) {
+        return {
+          candles: [],
+          error: "Conexão com a IQ Option em pausa para evitar bloqueio por excesso de acessos.",
+          retryAfterMs: error.retryAfterMs,
+        };
+      }
       return { candles: [], error: "Market data temporarily unavailable" };
     }
   });
