@@ -3,36 +3,106 @@
 const IQ_WS_URL = "wss://iqoption.com/echo/websocket";
 const IQ_LOGIN_URL = "https://auth.iqoption.com/api/v2/login";
 
+const SSID_TTL_MS = 12 * 60 * 60 * 1000;
+const SESSION_IDLE_MS = 4 * 60 * 1000;
+const MAX_BACKOFF_MS = 15 * 60 * 1000;
+
 let cachedSsid: { value: string; expiresAt: number } | null = null;
+let ssidPromise: Promise<string> | null = null;
+let loginFailures = 0;
+let loginBlockedUntil = 0;
+let loginBlockedReason = "";
 let activeIdCache: { map: Record<string, number>; expiresAt: number } | null = null;
+let activeIdPromise: Promise<Record<string, number>> | null = null;
+
+export class IqOptionBackoffError extends Error {
+  readonly retryAfterMs: number;
+
+  constructor(message: string, retryAfterMs: number) {
+    super(message);
+    this.name = "IqOptionBackoffError";
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+function retryAfterMs(response: Response): number | null {
+  const value = response.headers.get("retry-after");
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(1_000, seconds * 1_000);
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(1_000, date - Date.now()) : null;
+}
+
+function registerLoginFailure(status: number, response?: Response) {
+  loginFailures += 1;
+  const providerDelay = response ? retryAfterMs(response) : null;
+  const base = status === 429 ? 60_000 : 5_000;
+  const exponential = Math.min(base * 2 ** Math.min(loginFailures - 1, 4), MAX_BACKOFF_MS);
+  const delay = Math.min(Math.max(providerDelay ?? 0, exponential), MAX_BACKOFF_MS);
+  loginBlockedUntil = Date.now() + delay;
+  loginBlockedReason = status === 429 ? "IQ Option login rate limited" : "IQ Option login temporarily unavailable";
+  return delay;
+}
 
 export async function getSsid(): Promise<string> {
   if (cachedSsid && cachedSsid.expiresAt > Date.now()) return cachedSsid.value;
 
-  const email = process.env["IQOPTION_EMAIL"];
-  const password = process.env["IQOPTION_PASSWORD"];
-  if (!email || !password) throw new Error("IQ Option credentials are not configured");
-
-  const res = await fetch(IQ_LOGIN_URL, {
-    method: "POST",
-    headers: { "content-type": "application/json", accept: "application/json" },
-    body: JSON.stringify({ identifier: email, password }),
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`IQ Option login failed (${res.status})`);
-
-  let ssid: string | undefined;
-  try {
-    const json = JSON.parse(text) as { ssid?: string; data?: { ssid?: string } };
-    ssid = json.ssid ?? json.data?.ssid;
-  } catch {
-    // fall through to cookie parsing
+  const remaining = loginBlockedUntil - Date.now();
+  if (remaining > 0) {
+    throw new IqOptionBackoffError(loginBlockedReason, remaining);
   }
-  if (!ssid) ssid = /ssid=([^;]+)/.exec(res.headers.get("set-cookie") ?? "")?.[1];
-  if (!ssid) throw new Error("IQ Option login response did not contain an SSID");
+  if (ssidPromise) return ssidPromise;
 
-  cachedSsid = { value: ssid, expiresAt: Date.now() + 6 * 60 * 60 * 1000 };
-  return ssid;
+  ssidPromise = (async () => {
+    const email = process.env["IQOPTION_EMAIL"];
+    const password = process.env["IQOPTION_PASSWORD"];
+    if (!email || !password) throw new Error("IQ Option credentials are not configured");
+
+    let res: Response;
+    try {
+      res = await fetch(IQ_LOGIN_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({ identifier: email, password }),
+      });
+    } catch (error) {
+      const delay = registerLoginFailure(503);
+      throw new IqOptionBackoffError(
+        error instanceof Error ? error.message : "IQ Option login request failed",
+        delay,
+      );
+    }
+
+    const text = await res.text();
+    if (!res.ok) {
+      const delay = registerLoginFailure(res.status, res);
+      throw new IqOptionBackoffError(`IQ Option login failed (${res.status})`, delay);
+    }
+
+    let ssid: string | undefined;
+    try {
+      const json = JSON.parse(text) as { ssid?: string; data?: { ssid?: string } };
+      ssid = json.ssid ?? json.data?.ssid;
+    } catch {
+      // fall through to cookie parsing
+    }
+    if (!ssid) ssid = /ssid=([^;]+)/.exec(res.headers.get("set-cookie") ?? "")?.[1];
+    if (!ssid) {
+      const delay = registerLoginFailure(502);
+      throw new IqOptionBackoffError("IQ Option login response did not contain an SSID", delay);
+    }
+
+    loginFailures = 0;
+    loginBlockedUntil = 0;
+    loginBlockedReason = "";
+    cachedSsid = { value: ssid, expiresAt: Date.now() + SSID_TTL_MS };
+    return ssid;
+  })().finally(() => {
+    ssidPromise = null;
+  });
+
+  return ssidPromise;
 }
 
 /**
@@ -88,10 +158,41 @@ interface UpstreamFrame {
   msg?: unknown;
 }
 
-/** Opens an authenticated short-lived session, runs `fn`, then closes it. */
-async function withSession<T>(
-  fn: (send: (frame: unknown) => void, waitFor: (predicate: (f: UpstreamFrame) => boolean, ms?: number) => Promise<UpstreamFrame>) => Promise<T>,
-): Promise<T> {
+interface SharedSession {
+  socket: WebSocket;
+  send: (frame: unknown) => void;
+  waitFor: (predicate: (frame: UpstreamFrame) => boolean, ms?: number) => Promise<UpstreamFrame>;
+  touchedAt: number;
+}
+
+let sharedSession: SharedSession | null = null;
+let sharedSessionPromise: Promise<SharedSession> | null = null;
+let sessionIdleTimer: ReturnType<typeof setTimeout> | null = null;
+
+function discardSharedSession() {
+  if (sessionIdleTimer) clearTimeout(sessionIdleTimer);
+  sessionIdleTimer = null;
+  const session = sharedSession;
+  sharedSession = null;
+  if (!session) return;
+  try {
+    session.socket.close();
+  } catch {
+    // already closed
+  }
+}
+
+function armSessionIdleTimer(session: SharedSession) {
+  if (sessionIdleTimer) clearTimeout(sessionIdleTimer);
+  sessionIdleTimer = setTimeout(() => {
+    if (sharedSession === session && Date.now() - session.touchedAt >= SESSION_IDLE_MS) {
+      discardSharedSession();
+    }
+  }, SESSION_IDLE_MS);
+}
+
+/** One authenticated upstream socket shared by all server requests in this worker. */
+async function createSharedSession(): Promise<SharedSession> {
   const socket = await openUpstreamSocket();
   const listeners = new Set<(frame: UpstreamFrame) => void>();
 
@@ -128,20 +229,65 @@ async function withSession<T>(
     authenticate(socket, await getSsid());
     // IQ Option drops requests sent before the session profile is delivered.
     await waitFor((f) => f.name === "profile" && !!f.msg, 15_000);
-    return await fn(send, waitFor);
-  } finally {
+  } catch (error) {
     try {
       socket.close();
     } catch {
       // already closed
     }
+    throw error;
+  }
+
+  const session: SharedSession = { socket, send, waitFor, touchedAt: Date.now() };
+  const invalidate = () => {
+    if (sharedSession === session) discardSharedSession();
+  };
+  socket.addEventListener("close", invalidate);
+  socket.addEventListener("error", invalidate);
+  return session;
+}
+
+async function getSharedSession(): Promise<SharedSession> {
+  if (sharedSession?.socket.readyState === 1) {
+    sharedSession.touchedAt = Date.now();
+    armSessionIdleTimer(sharedSession);
+    return sharedSession;
+  }
+  if (sharedSessionPromise) return sharedSessionPromise;
+
+  sharedSessionPromise = createSharedSession()
+    .then((session) => {
+      sharedSession = session;
+      armSessionIdleTimer(session);
+      return session;
+    })
+    .finally(() => {
+      sharedSessionPromise = null;
+    });
+  return sharedSessionPromise;
+}
+
+async function withSession<T>(
+  fn: (send: SharedSession["send"], waitFor: SharedSession["waitFor"]) => Promise<T>,
+): Promise<T> {
+  const session = await getSharedSession();
+  session.touchedAt = Date.now();
+  armSessionIdleTimer(session);
+  try {
+    return await fn(session.send, session.waitFor);
+  } catch (error) {
+    // Do not log in again here. Drop only the failed socket; getSsid remains
+    // cached, so the next request reconnects without hitting the login API.
+    discardSharedSession();
+    throw error;
   }
 }
 
 export async function getActiveIdMap(): Promise<Record<string, number>> {
   if (activeIdCache && activeIdCache.expiresAt > Date.now()) return activeIdCache.map;
+  if (activeIdPromise) return activeIdPromise;
 
-  const map = await withSession(async (send, waitFor) => {
+  activeIdPromise = withSession(async (send, waitFor) => {
     send({
       name: "sendMessage",
       request_id: "init",
@@ -157,7 +303,14 @@ export async function getActiveIdMap(): Promise<Record<string, number>> {
       }
     }
     return result;
+  }).then((map) => {
+    activeIdCache = { map, expiresAt: Date.now() + 60 * 60 * 1000 };
+    return map;
+  }).finally(() => {
+    activeIdPromise = null;
   });
+
+  const map = await activeIdPromise;
 
   // IQ Option names carry suffixes (-OP for options FX, -OTC for weekend
   // synthetic markets). Expose plain base names too, preferring live markets.
@@ -174,7 +327,6 @@ export async function getActiveIdMap(): Promise<Record<string, number>> {
     }
   }
 
-  activeIdCache = { map, expiresAt: Date.now() + 60 * 60 * 1000 };
   return map;
 }
 
@@ -187,16 +339,25 @@ export interface UpstreamCandle {
   volume: number;
 }
 
+const candleCache = new Map<string, { candles: UpstreamCandle[]; expiresAt: number }>();
+const candleRequests = new Map<string, Promise<UpstreamCandle[]>>();
+
 export async function fetchCandles(
   iqName: string,
   sizeSeconds: number,
   count: number,
 ): Promise<UpstreamCandle[]> {
+  const cacheKey = `${iqName.toUpperCase()}:${sizeSeconds}:${count}`;
+  const cached = candleCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.candles;
+  const pending = candleRequests.get(cacheKey);
+  if (pending) return pending;
+
   const activeId = (await getActiveIdMap())[iqName.toUpperCase()];
   if (!activeId) throw new Error(`Unknown IQ Option asset: ${iqName}`);
 
-  return withSession(async (send, waitFor) => {
-    const requestId = `candles-${Date.now()}`;
+  const request = withSession(async (send, waitFor) => {
+    const requestId = `candles-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     send({
       name: "sendMessage",
       request_id: requestId,
@@ -213,7 +374,7 @@ export async function fetchCandles(
     });
     const frame = await waitFor((f) => f.request_id === requestId || f.name === "candles", 15_000);
     const raw = ((frame.msg ?? {}) as { candles?: Array<Record<string, number>> }).candles ?? [];
-    return raw
+    const candles = raw
       .map((c) => ({
         time: Number(c["from"]),
         open: Number(c["open"]),
@@ -224,5 +385,14 @@ export async function fetchCandles(
       }))
       .filter((c) => Number.isFinite(c.time) && Number.isFinite(c.close))
       .sort((a, b) => a.time - b.time);
+    candleCache.set(cacheKey, {
+      candles,
+      expiresAt: Date.now() + (sizeSeconds <= 1 ? 1_500 : 4_000),
+    });
+    return candles;
+  }).finally(() => {
+    candleRequests.delete(cacheKey);
   });
+  candleRequests.set(cacheKey, request);
+  return request;
 }

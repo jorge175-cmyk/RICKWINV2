@@ -39,7 +39,7 @@ export const Route = createFileRoute("/api/public/iqoption-ws")({
           return new Response("Unauthorized", { status: 401 });
         }
 
-        const { getSsid, openUpstreamSocket, authenticate } = await import(
+        const { getSsid, openUpstreamSocket, authenticate, IqOptionBackoffError } = await import(
           "@/lib/iqoption/iqoption.server"
         );
 
@@ -50,6 +50,12 @@ export const Route = createFileRoute("/api/public/iqoption-ws")({
           upstream = await openUpstreamSocket();
         } catch (error) {
           console.error("[iqoption-ws] upstream setup failed", error);
+          if (error instanceof IqOptionBackoffError) {
+            return new Response("Upstream temporarily rate limited", {
+              status: 503,
+              headers: { "retry-after": String(Math.max(1, Math.ceil(error.retryAfterMs / 1_000))) },
+            });
+          }
           return new Response("Upstream authentication failed", { status: 502 });
         }
 
