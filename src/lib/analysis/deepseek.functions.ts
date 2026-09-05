@@ -8,6 +8,20 @@ const inputSchema = z.object({
   direction: z.enum(["CALL", "PUT"]),
   confidence: z.number(),
   indicators: z.record(z.string(), z.unknown()),
+  candles: z
+    .array(
+      z.object({
+        time: z.number(),
+        open: z.number(),
+        high: z.number(),
+        low: z.number(),
+        close: z.number(),
+        volume: z.number().optional(),
+      }),
+    )
+    .max(50)
+    .optional(),
+  structure: z.record(z.string(), z.unknown()).optional(),
 });
 
 export interface DeepseekVerdict {
@@ -21,7 +35,13 @@ export interface DeepseekVerdict {
 const SYSTEM_PROMPT = `Você é um analista quantitativo sênior de opções binárias.
 Recebe um pacote com indicadores técnicos (tendência, RSI, ATR, padrões de candle, confirmação multi-timeframe)
 e microestrutura HFT (pressão por janelas, tick rate, aceleração, streak, agressão, absorção, bursts, POC/área de valor
-e dominância consolidada da vela). Sua tarefa é dar o veredito FINAL para uma entrada na PRÓXIMA vela.
+e dominância consolidada da vela). Você também recebe as 50 velas mais recentes do timeframe (OHLC),
+zonas de suporte e resistência já calculadas e indícios de manipulação do gráfico
+(caças de stop com pavios longos, rompimentos falsos, spikes de amplitude anormal, sequências de doji e preço dentro de zona).
+Sua tarefa é dar o veredito FINAL para uma entrada na PRÓXIMA vela.
+Analise as velas para confirmar suporte/resistência, evitar entradas contra zonas de reversão e detectar manipulação:
+se o fluxo levar o preço direto para uma zona forte, ou houver sinais claros de manipulação/armadilha de liquidez,
+use AGUARDAR (ou INVERTER quando a rejeição na zona for evidente).
 Responda SOMENTE com JSON válido no formato:
 {"verdict":"CONFIRMAR|AGUARDAR|INVERTER","direction":"CALL|PUT|null","confidence":0-100,"reasoning":"1-3 frases em português","risks":["risco 1","risco 2"]}
 Seja conservador: se houver divergência relevante entre HFT e indicadores, use AGUARDAR.`;
@@ -41,6 +61,8 @@ export const deepseekVerdict = createServerFn({ method: "POST" })
       timeframe: data.timeframe,
       sinal_local: { direcao: data.direction, confianca: data.confidence },
       indicadores: data.indicators,
+      velas_recentes: data.candles ?? [],
+      estrutura_suporte_resistencia: data.structure ?? null,
     };
 
     try {

@@ -24,6 +24,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { analyzeAsset } from "@/lib/analysis/analysis.functions";
 import { deepseekVerdict } from "@/lib/analysis/deepseek.functions";
+import { analyseStructure } from "@/lib/analysis/structure";
 import { fuseDominanceWithIndicators } from "@/lib/analysis/candleDominance";
 import { secondsToNextCandle } from "@/lib/analysis/tick";
 import { getIqOptionName, timeframeSeconds } from "@/lib/iqoption/mapping";
@@ -67,7 +68,7 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
 
   const asset = active ? getIqOptionName(symbol) : null;
   const run = useServerFn(analyzeAsset);
-  const { tickAnalysis, liveDominance, closedDominance, isLive, status } = useIqOptionStream(
+  const { data: candles, tickAnalysis, liveDominance, closedDominance, isLive, status } = useIqOptionStream(
     active ? symbol : null,
     timeframe,
   );
@@ -114,6 +115,20 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
   const domSigned = dom ? (dom.dominant === "PUT" ? -dom.dominancePct : dom.dominant === "CALL" ? dom.dominancePct : 0) : 0;
   const tickRate = tickAnalysis?.hft.tickRate ?? 0;
 
+  const recentCandles = useMemo(
+    () =>
+      (candles ?? []).slice(-50).map((c) => ({
+        time: c.time,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+        volume: c.volume,
+      })),
+    [candles],
+  );
+  const structure = useMemo(() => analyseStructure(candles ?? []), [candles]);
+
   // ---- DeepSeek final verdict: only for entries above 80% ----
   const finalDirection = (fused?.direction ?? result?.direction) as "CALL" | "PUT" | null | undefined;
   const finalConfidence = Math.max(fused?.confidence ?? 0, result?.confidence ?? 0);
@@ -148,7 +163,11 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
             ticks: tickAnalysis?.tickCount,
             dominancia_vela: closedDominance ?? liveDominance,
             fusao: fused,
+            estrutura: structure,
+            manipulacao: structure?.manipulation,
           },
+          candles: recentCandles,
+          structure: structure ?? undefined,
         },
       }),
     enabled: qualifies,
