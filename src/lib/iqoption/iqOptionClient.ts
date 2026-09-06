@@ -236,32 +236,48 @@ class IqOptionClient {
       const url = `${window.location.origin.replace(/^http/, "ws")}${PROXY_PATH}?token=${encodeURIComponent(token)}`;
       await new Promise<void>((resolve, reject) => {
         const socket = new WebSocket(url);
+        let proxyReady = false;
         const timer = setTimeout(() => {
           socket.close();
-          reject(new Error("Streaming handshake timeout"));
-        }, 12_000);
+          reject(new Error("Streaming authentication timeout"));
+        }, 25_000);
 
         socket.onopen = () => {
-          clearTimeout(timer);
           this.socket = socket;
           this.lastFrameAt = Date.now();
-          this.reconnectAttempts = 0;
-          this.setStatus("live");
-          for (const { asset, sizeSeconds } of this.subscriptions.values()) {
-            this.sendCandleSubscribe(asset, sizeSeconds);
+        };
+        socket.onmessage = (event) => {
+          if (!proxyReady && typeof event.data === "string") {
+            try {
+              const frame = JSON.parse(event.data) as { name?: string };
+              if (frame.name === "proxy-ready") {
+                proxyReady = true;
+                clearTimeout(timer);
+                this.lastFrameAt = Date.now();
+                this.reconnectAttempts = 0;
+                this.setStatus("live");
+                for (const { asset, sizeSeconds } of this.subscriptions.values()) {
+                  this.sendCandleSubscribe(asset, sizeSeconds);
+                }
+                for (const { asset } of this.quoteSubscriptions.values()) {
+                  this.sendQuoteSubscribe(asset);
+                }
+                this.startWatchdog();
+                resolve();
+              }
+            } catch {
+              // Non-JSON frames are ignored by the market-data parser too.
+            }
           }
-          for (const { asset } of this.quoteSubscriptions.values()) {
-            this.sendQuoteSubscribe(asset);
-          }
-          this.startWatchdog();
-          resolve();
+          this.handleFrame(event.data);
         };
         socket.onerror = () => {
           clearTimeout(timer);
           reject(new Error("Streaming connection failed"));
         };
-        socket.onmessage = (event) => this.handleFrame(event.data);
         socket.onclose = () => {
+          clearTimeout(timer);
+          if (!proxyReady) reject(new Error("Streaming closed before authentication"));
           if (this.socket === socket) {
             this.socket = null;
             if (this.hasSubscriptions()) this.scheduleReconnect();

@@ -1,11 +1,15 @@
 // Server-only IQ Option upstream access. The SSID never leaves the server.
 
+import { supabaseAdmin } from "@/integrations/supabase/client.server";
+
 const IQ_WS_URL = "wss://iqoption.com/echo/websocket";
 const IQ_LOGIN_URL = "https://auth.iqoption.com/api/v2/login";
 
 const SSID_TTL_MS = 12 * 60 * 60 * 1000;
 const SESSION_IDLE_MS = 4 * 60 * 1000;
 const MAX_BACKOFF_MS = 15 * 60 * 1000;
+const LOGIN_LEASE_SECONDS = 25;
+const LOGIN_WAIT_ATTEMPTS = 15;
 
 let cachedSsid: { value: string; expiresAt: number } | null = null;
 let ssidPromise: Promise<string> | null = null;
@@ -45,6 +49,61 @@ function registerLoginFailure(status: number, response?: Response) {
   return delay;
 }
 
+interface SharedLoginState {
+  claimed: boolean;
+  ssid: string | null;
+  ssid_expires_at: string | null;
+  login_blocked_until: string | null;
+  login_blocked_reason: string | null;
+  login_failures: number;
+}
+
+async function claimSharedLogin(): Promise<SharedLoginState> {
+  const { data, error } = await supabaseAdmin.rpc("claim_iqoption_login", {
+    claim_for_seconds: LOGIN_LEASE_SECONDS,
+  });
+  if (error) throw new Error(`Unable to coordinate IQ Option login: ${error.message}`);
+  const state = data?.[0];
+  if (!state) throw new Error("IQ Option shared login state is unavailable");
+  return state;
+}
+
+async function saveSharedLoginSuccess(ssid: string) {
+  const expiresAt = new Date(Date.now() + SSID_TTL_MS).toISOString();
+  const { error } = await supabaseAdmin
+    .from("iqoption_connection_state")
+    .update({
+      ssid,
+      ssid_expires_at: expiresAt,
+      login_blocked_until: null,
+      login_blocked_reason: null,
+      login_failures: 0,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("singleton", true);
+  if (error) throw new Error(`Unable to save IQ Option session: ${error.message}`);
+  cachedSsid = { value: ssid, expiresAt: Date.parse(expiresAt) };
+}
+
+async function saveSharedLoginFailure(status: number, delay: number, reason: string) {
+  const { error } = await supabaseAdmin
+    .from("iqoption_connection_state")
+    .update({
+      ssid: null,
+      ssid_expires_at: null,
+      login_blocked_until: new Date(Date.now() + delay).toISOString(),
+      login_blocked_reason: reason,
+      login_failures: loginFailures,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("singleton", true);
+  if (error) console.error("[iqoption] failed to persist login backoff", error.message, status);
+}
+
+function wait(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
 export async function getSsid(): Promise<string> {
   if (cachedSsid && cachedSsid.expiresAt > Date.now()) return cachedSsid.value;
 
@@ -55,6 +114,35 @@ export async function getSsid(): Promise<string> {
   if (ssidPromise) return ssidPromise;
 
   ssidPromise = (async () => {
+    let claimed = false;
+    for (let attempt = 0; attempt < LOGIN_WAIT_ATTEMPTS; attempt += 1) {
+      const state = await claimSharedLogin();
+      const sharedExpiry = state.ssid_expires_at ? Date.parse(state.ssid_expires_at) : 0;
+      if (state.ssid && sharedExpiry > Date.now()) {
+        cachedSsid = { value: state.ssid, expiresAt: sharedExpiry };
+        loginFailures = 0;
+        loginBlockedUntil = 0;
+        return state.ssid;
+      }
+      if (state.claimed) {
+        claimed = true;
+        loginFailures = state.login_failures ?? 0;
+        break;
+      }
+
+      const blockedUntil = state.login_blocked_until ? Date.parse(state.login_blocked_until) : 0;
+      const remainingMs = Math.max(1_000, blockedUntil - Date.now());
+      if (state.login_blocked_reason !== "Login em andamento") {
+        loginBlockedUntil = blockedUntil;
+        loginBlockedReason = state.login_blocked_reason ?? "IQ Option login temporarily unavailable";
+        throw new IqOptionBackoffError(loginBlockedReason, remainingMs);
+      }
+      await wait(Math.min(2_000, remainingMs));
+    }
+    if (!claimed) {
+      throw new IqOptionBackoffError("IQ Option login is already being established", 5_000);
+    }
+
     const email = process.env["IQOPTION_EMAIL"];
     const password = process.env["IQOPTION_PASSWORD"];
     if (!email || !password) throw new Error("IQ Option credentials are not configured");
@@ -68,6 +156,7 @@ export async function getSsid(): Promise<string> {
       });
     } catch (error) {
       const delay = registerLoginFailure(503);
+      await saveSharedLoginFailure(503, delay, loginBlockedReason);
       throw new IqOptionBackoffError(
         error instanceof Error ? error.message : "IQ Option login request failed",
         delay,
@@ -77,6 +166,7 @@ export async function getSsid(): Promise<string> {
     const text = await res.text();
     if (!res.ok) {
       const delay = registerLoginFailure(res.status, res);
+      await saveSharedLoginFailure(res.status, delay, loginBlockedReason);
       throw new IqOptionBackoffError(`IQ Option login failed (${res.status})`, delay);
     }
 
@@ -90,13 +180,14 @@ export async function getSsid(): Promise<string> {
     if (!ssid) ssid = /ssid=([^;]+)/.exec(res.headers.get("set-cookie") ?? "")?.[1];
     if (!ssid) {
       const delay = registerLoginFailure(502);
+      await saveSharedLoginFailure(502, delay, loginBlockedReason);
       throw new IqOptionBackoffError("IQ Option login response did not contain an SSID", delay);
     }
 
     loginFailures = 0;
     loginBlockedUntil = 0;
     loginBlockedReason = "";
-    cachedSsid = { value: ssid, expiresAt: Date.now() + SSID_TTL_MS };
+    await saveSharedLoginSuccess(ssid);
     return ssid;
   })().finally(() => {
     ssidPromise = null;
