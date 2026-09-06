@@ -1,6 +1,7 @@
 import type { CandleData, Timeframe } from "@/lib/iqoption/mapping";
 import { atr, detectTrend, rsi, type TrendInfo } from "./indicators";
 import { detectPatterns, patternScore, type PatternHit } from "./patterns";
+import { analysePriceAction, type PriceActionAnalysis } from "./priceAction";
 
 export type SignalDirection = "CALL" | "PUT";
 
@@ -21,6 +22,7 @@ export interface AnalysisResult {
     higherTrend: TrendInfo["direction"];
     atr: number | null;
     patterns: PatternHit[];
+    priceAction: PriceActionAnalysis | null;
   };
   generatedAt: string;
 }
@@ -61,6 +63,7 @@ export function analyze(
   const patterns = detectPatterns(base);
   const pattern = patternScore(patterns);
   const atrValue = atr(base, 14);
+  const priceAction = analysePriceAction(base);
   const lastPrice = entryCandles[entryCandles.length - 1]?.close ?? null;
 
   if (base.length < 30) {
@@ -119,6 +122,31 @@ export function analyze(
     warnings.push("Nenhum padrão de reversão claro na última vela fechada.");
   }
 
+  // 4. Price action (market structure, BOS/CHoCH, momentum, rejection)
+  if (priceAction) {
+    const weight = 0.8 + priceAction.score * 1.2;
+    if (priceAction.bias === "bullish") {
+      bullish += weight;
+      reasons.push(`Price action de alta: ${priceAction.notes[0] ?? "estrutura favorável"}`);
+    } else if (priceAction.bias === "bearish") {
+      bearish += weight;
+      reasons.push(`Price action de baixa: ${priceAction.notes[0] ?? "estrutura favorável"}`);
+    } else {
+      warnings.push("Price action indefinido — estrutura sem viés claro.");
+    }
+    if (priceAction.structureShift) {
+      warnings.push("Mudança de caráter na estrutura (CHoCH) — cuidado com falso rompimento.");
+    }
+    if (priceAction.insideBar) {
+      warnings.push("Inside bar na última vela — compressão reduz a previsibilidade.");
+    }
+    if (priceAction.rejection) {
+      warnings.push(`Rejeição no ${priceAction.rejection} do range recente.`);
+    }
+  } else {
+    warnings.push("Price action sem velas suficientes para leitura de estrutura.");
+  }
+
   const total = bullish + bearish;
   const dominant = bullish === bearish ? null : bullish > bearish ? "CALL" : "PUT";
   const edge = total > 0 ? Math.abs(bullish - bearish) / total : 0;
@@ -131,11 +159,19 @@ export function analyze(
   const conflictingTf =
     (dominant === "CALL" && higherTrend.direction === "down") ||
     (dominant === "PUT" && higherTrend.direction === "up");
+
+  const conflictingPa =
+    (dominant === "CALL" && priceAction?.bias === "bearish") ||
+    (dominant === "PUT" && priceAction?.bias === "bullish");
+  if (conflictingPa) {
+    warnings.push("Price action contraria a direção da confluência.");
+  }
   if (conflictingTf) {
     warnings.push(`Conflito de timeframes: ${confirmation.label} contraria a entrada.`);
   }
 
-  const qualifies = dominant != null && strength >= 2.2 && edge >= 0.5 && !conflictingTf;
+  const qualifies =
+    dominant != null && strength >= 2.2 && edge >= 0.5 && !conflictingTf && !(conflictingPa && (priceAction?.score ?? 0) > 0.4);
   const direction = qualifies ? (dominant as SignalDirection) : null;
 
   const summary = direction
@@ -159,6 +195,7 @@ export function analyze(
       higherTrend: higherTrend.direction,
       atr: atrValue,
       patterns,
+      priceAction,
     },
     generatedAt: new Date().toISOString(),
   };
