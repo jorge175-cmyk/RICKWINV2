@@ -66,19 +66,25 @@ export const Route = createFileRoute("/api/public/iqoption-ws")({
 
         const pending: string[] = [];
         let upstreamReady = false;
+        let closed = false;
+        const authenticationTimer = setTimeout(() => closeBoth(), 20_000);
 
         upstream.addEventListener("open", () => {
           authenticate(upstream, ssid);
           upstream.send(JSON.stringify({ name: "setOptions", msg: { sendResults: true } }));
-          upstreamReady = true;
-          for (const frame of pending.splice(0)) upstream.send(frame);
-          server.send(JSON.stringify({ name: "proxy-ready", msg: { ok: true } }));
         });
 
         upstream.addEventListener("message", (event) => {
           const data = (event as MessageEvent).data;
           if (typeof data === "string") {
             try {
+              const frame = JSON.parse(data) as { name?: string; msg?: unknown };
+              if (!upstreamReady && frame.name === "profile" && frame.msg) {
+                upstreamReady = true;
+                clearTimeout(authenticationTimer);
+                for (const queued of pending.splice(0)) upstream.send(queued);
+                server.send(JSON.stringify({ name: "proxy-ready", msg: { ok: true } }));
+              }
               server.send(data);
             } catch {
               // client gone
@@ -87,6 +93,9 @@ export const Route = createFileRoute("/api/public/iqoption-ws")({
         });
 
         const closeBoth = () => {
+          if (closed) return;
+          closed = true;
+          clearTimeout(authenticationTimer);
           try {
             upstream.close();
           } catch {
