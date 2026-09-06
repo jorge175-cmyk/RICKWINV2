@@ -47,6 +47,36 @@ export type Database = {
         }
         Relationships: []
       }
+      iqoption_connection_state: {
+        Row: {
+          login_blocked_reason: string | null
+          login_blocked_until: string | null
+          login_failures: number
+          singleton: boolean
+          ssid: string | null
+          ssid_expires_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          login_blocked_reason?: string | null
+          login_blocked_until?: string | null
+          login_failures?: number
+          singleton?: boolean
+          ssid?: string | null
+          ssid_expires_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          login_blocked_reason?: string | null
+          login_blocked_until?: string | null
+          login_failures?: number
+          singleton?: boolean
+          ssid?: string | null
+          ssid_expires_at?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -283,6 +313,17 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      claim_iqoption_login: {
+        Args: { claim_for_seconds?: number }
+        Returns: {
+          claimed: boolean
+          login_blocked_reason: string
+          login_blocked_until: string
+          login_failures: number
+          ssid: string
+          ssid_expires_at: string
+        }[]
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
