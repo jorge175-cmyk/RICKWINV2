@@ -22,6 +22,7 @@ const inputSchema = z.object({
     .max(50)
     .optional(),
   structure: z.record(z.string(), z.unknown()).optional(),
+  priceAction: z.record(z.string(), z.unknown()).optional(),
 });
 
 export interface DeepseekVerdict {
@@ -34,11 +35,13 @@ export interface DeepseekVerdict {
 
 const SYSTEM_PROMPT = `Você é um analista quantitativo sênior de opções binárias.
 Recebe um pacote com indicadores técnicos (tendência, RSI, ATR, padrões de candle, confirmação multi-timeframe)
+leitura de price action (estrutura de mercado HH/HL vs LH/LL, rompimento de estrutura, mudança de caráter, força de corpo, inside bar, pullback e rejeição)
 e microestrutura HFT (pressão por janelas, tick rate, aceleração, streak, agressão, absorção, bursts, POC/área de valor
 e dominância consolidada da vela). Você também recebe as 50 velas mais recentes do timeframe (OHLC),
 zonas de suporte e resistência já calculadas e indícios de manipulação do gráfico
 (caças de stop com pavios longos, rompimentos falsos, spikes de amplitude anormal, sequências de doji e preço dentro de zona).
 Sua tarefa é dar o veredito FINAL para uma entrada na PRÓXIMA vela.
+Considere o price action como filtro principal: nunca confirme entrada contra a estrutura de mercado dominante sem rompimento válido.
 Analise as velas para confirmar suporte/resistência, evitar entradas contra zonas de reversão e detectar manipulação:
 se o fluxo levar o preço direto para uma zona forte, ou houver sinais claros de manipulação/armadilha de liquidez,
 use AGUARDAR (ou INVERTER quando a rejeição na zona for evidente).
@@ -63,6 +66,7 @@ export const deepseekVerdict = createServerFn({ method: "POST" })
       indicadores: data.indicators,
       velas_recentes: data.candles ?? [],
       estrutura_suporte_resistencia: data.structure ?? null,
+      price_action: data.priceAction ?? null,
     };
 
     try {

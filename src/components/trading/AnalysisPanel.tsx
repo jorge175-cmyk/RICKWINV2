@@ -163,11 +163,13 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
             ticks: tickAnalysis?.tickCount,
             dominancia_vela: closedDominance ?? liveDominance,
             fusao: fused,
+            price_action: result?.metrics.priceAction,
             estrutura: structure,
             manipulacao: structure?.manipulation,
           },
           candles: recentCandles,
           structure: structure ?? undefined,
+          priceAction: (result?.metrics.priceAction as Record<string, unknown> | null) ?? undefined,
         },
       }),
     enabled: qualifies,
@@ -439,6 +441,17 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
                 <Badge variant="secondary" className="gap-1"><Layers className="h-3 w-3" />{result.higherTimeframe}: {trendLabel(result.metrics.higherTrend)}</Badge>
                 {result.entryPrice != null && <Badge variant="secondary" className="font-mono">Preço {result.entryPrice.toFixed(5)}</Badge>}
                 {direction && <Badge variant="secondary">Expiração {result.expirationMinutes} min</Badge>}
+                {result.metrics.priceAction && (
+                  <Badge variant="secondary">PA: estrutura {result.metrics.priceAction.structure}</Badge>
+                )}
+                {result.metrics.priceAction?.breakOfStructure && (
+                  <Badge variant="secondary">Rompimento {result.metrics.priceAction.breakOfStructure}</Badge>
+                )}
+                {result.metrics.priceAction && (
+                  <Badge variant="secondary" className="font-mono">
+                    Corpo {result.metrics.priceAction.momentumRatio.toFixed(1)}x
+                  </Badge>
+                )}
               </div>
             </div>
 
