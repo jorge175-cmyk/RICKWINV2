@@ -5,9 +5,11 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 const IQ_WS_URL = "wss://iqoption.com/echo/websocket";
 const IQ_LOGIN_URL = "https://auth.iqoption.com/api/v2/login";
 
-const SSID_TTL_MS = 12 * 60 * 60 * 1000;
+// IQ Option sessions normally outlive a worker instance by days. Refreshing
+// them every few hours caused avoidable login bursts from serverless workers.
+const SSID_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const SESSION_IDLE_MS = 4 * 60 * 1000;
-const MAX_BACKOFF_MS = 15 * 60 * 1000;
+const MAX_BACKOFF_MS = 6 * 60 * 60 * 1000;
 const LOGIN_LEASE_SECONDS = 25;
 const LOGIN_WAIT_ATTEMPTS = 15;
 
@@ -41,7 +43,9 @@ function retryAfterMs(response: Response): number | null {
 function registerLoginFailure(status: number, response?: Response) {
   loginFailures += 1;
   const providerDelay = response ? retryAfterMs(response) : null;
-  const base = status === 429 ? 60_000 : 5_000;
+  // A 429 is account/IP protection, not a transient socket failure. Retrying
+  // every minute extends the provider block, so start at one hour.
+  const base = status === 429 ? 60 * 60 * 1000 : 15_000;
   const exponential = Math.min(base * 2 ** Math.min(loginFailures - 1, 4), MAX_BACKOFF_MS);
   const delay = Math.min(Math.max(providerDelay ?? 0, exponential), MAX_BACKOFF_MS);
   loginBlockedUntil = Date.now() + delay;
@@ -89,8 +93,6 @@ async function saveSharedLoginFailure(status: number, delay: number, reason: str
   const { error } = await supabaseAdmin
     .from("iqoption_connection_state")
     .update({
-      ssid: null,
-      ssid_expires_at: null,
       login_blocked_until: new Date(Date.now() + delay).toISOString(),
       login_blocked_reason: reason,
       login_failures: loginFailures,
@@ -106,11 +108,6 @@ function wait(ms: number) {
 
 export async function getSsid(): Promise<string> {
   if (cachedSsid && cachedSsid.expiresAt > Date.now()) return cachedSsid.value;
-
-  const remaining = loginBlockedUntil - Date.now();
-  if (remaining > 0) {
-    throw new IqOptionBackoffError(loginBlockedReason, remaining);
-  }
   if (ssidPromise) return ssidPromise;
 
   ssidPromise = (async () => {
@@ -284,6 +281,10 @@ function armSessionIdleTimer(session: SharedSession) {
 
 /** One authenticated upstream socket shared by all server requests in this worker. */
 async function createSharedSession(): Promise<SharedSession> {
+  // Resolve the coordinated credential before opening a socket. During a
+  // provider cooldown this avoids creating a fresh upstream connection for
+  // every candle/analysis request.
+  const ssid = await getSsid();
   const socket = await openUpstreamSocket();
   const listeners = new Set<(frame: UpstreamFrame) => void>();
 
@@ -317,7 +318,7 @@ async function createSharedSession(): Promise<SharedSession> {
 
   try {
     await waitOpen(socket);
-    authenticate(socket, await getSsid());
+    authenticate(socket, ssid);
     // IQ Option drops requests sent before the session profile is delivered.
     await waitFor((f) => f.name === "profile" && !!f.msg, 15_000);
   } catch (error) {
