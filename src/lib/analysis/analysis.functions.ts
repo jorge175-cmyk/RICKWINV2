@@ -13,8 +13,8 @@ const inputSchema = z.object({
 export const analyzeAsset = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => inputSchema.parse(input))
-  .handler(async ({ data }): Promise<{ result: AnalysisResult | null; error?: string }> => {
-    const { fetchCandles } = await import("@/lib/iqoption/iqoption.server");
+  .handler(async ({ data }): Promise<{ result: AnalysisResult | null; error?: string; retryAfterMs?: number }> => {
+    const { fetchCandles, IqOptionBackoffError } = await import("@/lib/iqoption/iqoption.server");
     const entrySize = timeframeSeconds(data.timeframe);
     const higher = CONFIRMATION_TF[data.timeframe] ?? CONFIRMATION_TF['M5']!;
     try {
@@ -28,6 +28,13 @@ export const analyzeAsset = createServerFn({ method: "POST" })
       return { result: analyze(data.asset, data.timeframe, entryCandles, higherCandles) };
     } catch (error) {
       console.error("[analysis] failed", error);
+      if (error instanceof IqOptionBackoffError) {
+        return {
+          result: null,
+          error: "Conexão com a IQ Option em recuperação. A análise retomará automaticamente.",
+          retryAfterMs: error.retryAfterMs,
+        };
+      }
       return { result: null, error: "Análise temporariamente indisponível." };
     }
   });

@@ -87,7 +87,7 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
     },
     enabled: !!asset,
     staleTime: 30_000,
-    refetchInterval: 60_000,
+    refetchInterval: (query) => query.state.data?.retryAfterMs ? false : 60_000,
   });
 
   const result = data?.result ?? null;
