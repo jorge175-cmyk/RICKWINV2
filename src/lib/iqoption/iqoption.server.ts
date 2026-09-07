@@ -9,7 +9,7 @@ const IQ_LOGIN_URL = "https://auth.iqoption.com/api/v2/login";
 // them every few hours caused avoidable login bursts from serverless workers.
 const SSID_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const SESSION_IDLE_MS = 4 * 60 * 1000;
-const MAX_BACKOFF_MS = 6 * 60 * 60 * 1000;
+const MAX_BACKOFF_MS = 60 * 60 * 1000;
 const LOGIN_LEASE_SECONDS = 25;
 const LOGIN_WAIT_ATTEMPTS = 15;
 
