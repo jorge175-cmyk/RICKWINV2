@@ -32,7 +32,7 @@ type StatusHandler = (status: StreamStatus, error?: string) => void;
 
 const PROXY_PATH = "/api/public/iqoption-ws";
 const ZOMBIE_TIMEOUT_MS = 45_000;
-const MAX_RECONNECT_DELAY_MS = 60_000;
+const MAX_RECONNECT_DELAY_MS = 15 * 60_000;
 
 class IqOptionClient {
   private socket: WebSocket | null = null;
@@ -218,8 +218,13 @@ class IqOptionClient {
   private async connect(): Promise<void> {
     this.setStatus("connecting");
     try {
-      if (!this.activeIds) {
-        this.activeIds = await getActiveIds();
+      if (!this.activeIds || Object.keys(this.activeIds).length === 0) {
+        const activeIds = await getActiveIds();
+        if (Object.keys(activeIds).length === 0) {
+          this.activeIds = null;
+          throw new Error("IQ Option asset list temporarily unavailable");
+        }
+        this.activeIds = activeIds;
         this.idToName.clear();
         for (const [name, id] of Object.entries(this.activeIds)) {
           if (!this.idToName.has(id)) this.idToName.set(id, name);
@@ -366,7 +371,7 @@ class IqOptionClient {
   private scheduleReconnect() {
     if (this.reconnectTimer || !this.hasSubscriptions()) return;
     this.reconnectAttempts += 1;
-    const exponential = Math.min(2_000 * 2 ** Math.min(this.reconnectAttempts - 1, 5), MAX_RECONNECT_DELAY_MS);
+    const exponential = Math.min(5_000 * 2 ** Math.min(this.reconnectAttempts - 1, 8), MAX_RECONNECT_DELAY_MS);
     const delay = exponential + Math.floor(Math.random() * Math.min(2_000, exponential / 4));
     this.nextReconnectAt = Date.now() + delay;
     this.reconnectTimer = setTimeout(() => {
