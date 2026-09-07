@@ -212,6 +212,11 @@ export async function openUpstreamSocket(): Promise<WebSocket> {
         "User-Agent": "Mozilla/5.0 BinaryPulse",
       },
     });
+    if (!res.ok && res.status !== 101) {
+      const delay = registerLoginFailure(res.status, res);
+      await saveSharedLoginFailure(res.status, delay, `IQ Option socket unavailable (${res.status})`);
+      throw new IqOptionBackoffError(`IQ Option socket unavailable (${res.status})`, delay);
+    }
     const socket = res.webSocket as (WebSocket & { accept?: () => void }) | null | undefined;
     if (!socket) throw new Error("Upstream refused the WebSocket upgrade");
     socket.accept?.();
@@ -464,7 +469,10 @@ export async function fetchCandles(
         },
       },
     });
-    const frame = await waitFor((f) => f.request_id === requestId || f.name === "candles", 15_000);
+    // The shared socket can have several candle requests in flight. Matching
+    // only by request_id prevents one asset's response from resolving every
+    // pending request with the wrong candle set.
+    const frame = await waitFor((f) => f.request_id === requestId, 15_000);
     const raw = ((frame.msg ?? {}) as { candles?: Array<Record<string, number>> }).candles ?? [];
     const candles = raw
       .map((c) => ({
