@@ -53,9 +53,11 @@ Faça uma ANÁLISE PROFUNDA, passo a passo, antes de decidir:
 Regras: nunca confirme entrada contra a estrutura dominante sem rompimento válido; se o fluxo levar o preço direto para uma zona forte
 ou para uma LTA/LTB não rompida, use AGUARDAR; se houver rejeição evidente na zona, use INVERTER;
 em divergência relevante entre HFT e indicadores, use AGUARDAR. Seja conservador — assertividade importa mais que quantidade de sinais.
+O campo "direction" é OBRIGATÓRIO em toda resposta: mesmo quando o veredito for AGUARDAR, indique a direção mais provável
+(CALL ou PUT) para a próxima vela com base no conjunto dos dados. Nunca retorne direction nula.
 
 Responda SOMENTE com JSON válido no formato:
-{"verdict":"CONFIRMAR|AGUARDAR|INVERTER","direction":"CALL|PUT|null","confidence":0-100,"reasoning":"2-4 frases em português citando zonas, LTA/LTB e fluxo","risks":["risco 1","risco 2"]}`;
+{"verdict":"CONFIRMAR|AGUARDAR|INVERTER","direction":"CALL|PUT","confidence":0-100,"reasoning":"2-4 frases em português citando zonas, LTA/LTB e fluxo","risks":["risco 1","risco 2"]}`;
 
 /** Final verdict via DeepSeek — only called for signals above 80% confidence. */
 export const deepseekVerdict = createServerFn({ method: "POST" })
@@ -115,7 +117,9 @@ export const deepseekVerdict = createServerFn({ method: "POST" })
       const verdict: DeepseekVerdict = {
         verdict:
           parsed.verdict === "CONFIRMAR" || parsed.verdict === "INVERTER" ? parsed.verdict : "AGUARDAR",
-        direction: parsed.direction === "CALL" || parsed.direction === "PUT" ? parsed.direction : null,
+        // Sempre expor uma direção: usa a do DeepSeek ou, na falta, a direção do sinal local.
+        direction:
+          parsed.direction === "CALL" || parsed.direction === "PUT" ? parsed.direction : data.direction,
         confidence: Math.max(0, Math.min(100, Math.round(Number(parsed.confidence) || 0))),
         reasoning: typeof parsed.reasoning === "string" ? parsed.reasoning : "",
         risks: Array.isArray(parsed.risks) ? parsed.risks.filter((r): r is string => typeof r === "string").slice(0, 4) : [],
