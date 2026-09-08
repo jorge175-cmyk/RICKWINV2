@@ -1,4 +1,5 @@
 import type { CandleData } from "@/lib/iqoption/mapping";
+import { analyseTrendLines, type TrendLineAnalysis } from "./trendlines";
 
 export interface PriceZone {
   /** zone center price */
@@ -37,6 +38,8 @@ export interface StructureAnalysis {
   /** true when price sits close to a reversal zone */
   reversalRisk: boolean;
   manipulation: ManipulationFlags;
+  /** LTA/LTB trendlines fitted on recent pivots */
+  trendLines: TrendLineAnalysis | null;
 }
 
 const clusterLevels = (values: number[], tolerance: number): Array<{ price: number; touches: number }> => {
@@ -144,5 +147,6 @@ export function analyseStructure(candles: CandleData[]): StructureAnalysis | nul
       (nearestResistancePct !== null && nearestResistancePct < 0.05) ||
       (nearestSupportPct !== null && nearestSupportPct < 0.05),
     manipulation: { wickHunts, falseBreaks, spikes, stalls, insideZone, notes },
+    trendLines: analyseTrendLines(candles),
   };
 }

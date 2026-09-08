@@ -117,7 +117,7 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
 
   const recentCandles = useMemo(
     () =>
-      (candles ?? []).slice(-50).map((c) => ({
+      (candles ?? []).slice(-150).map((c) => ({
         time: c.time,
         open: c.open,
         high: c.high,
@@ -129,10 +129,10 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
   );
   const structure = useMemo(() => analyseStructure(candles ?? []), [candles]);
 
-  // ---- DeepSeek final verdict: only for entries above 80% ----
+  // ---- DeepSeek final verdict: entries at or above 60% ----
   const finalDirection = (fused?.direction ?? result?.direction) as "CALL" | "PUT" | null | undefined;
   const finalConfidence = Math.max(fused?.confidence ?? 0, result?.confidence ?? 0);
-  const qualifies = !!asset && !!finalDirection && finalConfidence >= 80;
+  const qualifies = !!asset && !!finalDirection && finalConfidence >= 60;
   const verdictKey = closedDominance?.candleTime ?? result?.generatedAt ?? "n/a";
 
   const askDeepseek = useServerFn(deepseekVerdict);
@@ -165,6 +165,7 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
             fusao: fused,
             price_action: result?.metrics.priceAction,
             estrutura: structure,
+            linhas_tendencia: structure?.trendLines,
             manipulacao: structure?.manipulation,
           },
           candles: recentCandles,
@@ -401,7 +402,7 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
               )}
               {!qualifies && (
                 <p className="text-xs text-muted-foreground">
-                  O DeepSeek será acionado quando o sinal local atingir <span className="font-medium text-foreground">{finalDirection ?? "CALL/PUT"} ≥ 80%</span> de confiança. Aguardando confluência…
+                  O DeepSeek será acionado quando o sinal local atingir <span className="font-medium text-foreground">{finalDirection ?? "CALL/PUT"} ≥ 60%</span> de confiança. Aguardando confluência…
                 </p>
               )}
               {aiError && <p className="text-xs text-muted-foreground">{aiError}</p>}
