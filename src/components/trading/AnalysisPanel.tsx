@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -13,6 +13,8 @@ import {
   RefreshCw,
   Sparkles,
   Timer,
+  Volume2,
+  VolumeX,
   Waves,
 } from "lucide-react";
 import chartTexture from "@/assets/card-texture.jpg";
@@ -52,6 +54,35 @@ function ageLabel(updatedAt: number | undefined, now: number) {
 }
 
 const ACTIVE_KEY = "binarypulse:analysis-active";
+const SOUND_KEY = "binarypulse:analysis-sound";
+
+/** Toca um bipe curto (Web Audio) quando chega um novo veredito do DeepSeek. */
+function playVerdictAlert(direction: "CALL" | "PUT") {
+  try {
+    const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    void ctx.resume().catch(() => {});
+    const notes = direction === "CALL" ? [660, 880] : [520, 380];
+    notes.forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      const start = ctx.currentTime + 0.05 + i * 0.18;
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(0.25, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.16);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(start);
+      osc.stop(start + 0.18);
+    });
+    window.setTimeout(() => void ctx.close().catch(() => {}), 1_200);
+  } catch {
+    // áudio indisponível — alerta visual continua funcionando
+  }
+}
 
 export function AnalysisPanel({ symbol, timeframe }: Props) {
   const [active, setActive] = useState(true);
@@ -129,11 +160,12 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
   );
   const structure = useMemo(() => analyseStructure(candles ?? []), [candles]);
 
-  // ---- DeepSeek final verdict: sempre que houver direção local (mesmo fraca) ----
+  // ---- DeepSeek final verdict: apenas sinais locais com 70% ou mais ----
   const finalDirection = (fused?.direction ?? result?.direction) as "CALL" | "PUT" | null | undefined;
   const finalConfidence = Math.max(fused?.confidence ?? 0, result?.confidence ?? 0);
-  const qualifies = !!asset && !!finalDirection;
+  const qualifies = !!asset && !!finalDirection && finalConfidence >= 70;
   const verdictKey = closedDominance?.candleTime ?? result?.generatedAt ?? "n/a";
+
 
   const askDeepseek = useServerFn(deepseekVerdict);
   const { data: aiData, isFetching: aiLoading } = useQuery({
@@ -180,6 +212,32 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
   const ai = aiData?.verdict ?? null;
   const aiError = aiData?.error ?? null;
 
+  // ---- Alerta sonoro para novos vereditos do DeepSeek ----
+  const [soundOn, setSoundOn] = useState(true);
+  const lastAlertRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(SOUND_KEY);
+    if (stored !== null) setSoundOn(stored === "1");
+  }, []);
+
+  const toggleSound = (next: boolean) => {
+    setSoundOn(next);
+    window.localStorage.setItem(SOUND_KEY, next ? "1" : "0");
+  };
+
+  useEffect(() => {
+    if (!ai || !asset) return;
+    const key = `${asset}|${timeframe}|${verdictKey}|${ai.verdict}|${ai.direction}`;
+    if (lastAlertRef.current === key) return;
+    const first = lastAlertRef.current === null;
+    lastAlertRef.current = key;
+    if (first || !soundOn) return;
+    playVerdictAlert(ai.direction === "PUT" ? "PUT" : "CALL");
+  }, [ai, asset, timeframe, verdictKey, soundOn]);
+
+
+
 
 
   return (
@@ -205,10 +263,21 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
             </span>
             <Switch id="analysis-power" checked={active} onCheckedChange={toggleActive} />
           </label>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => toggleSound(!soundOn)}
+            className="gap-1.5"
+            aria-label={soundOn ? "Desativar alerta sonoro" : "Ativar alerta sonoro"}
+          >
+            {soundOn ? <Volume2 className="h-3.5 w-3.5 text-accent" /> : <VolumeX className="h-3.5 w-3.5 text-muted-foreground" />}
+            <span className="hidden sm:inline">{soundOn ? "Som ligado" : "Som desligado"}</span>
+          </Button>
           <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={isFetching || !asset} className="gap-1.5">
             <RefreshCw className={`h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} />
             <span className="hidden sm:inline">Atualizar</span>
           </Button>
+
         </div>
       </CardHeader>
       <CardContent className="relative space-y-4">
@@ -351,7 +420,7 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
                 <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
                   <BrainCircuit className="h-4 w-4 text-accent" /> Veredito final — DeepSeek
                 </p>
-                {!qualifies && <Badge variant="outline">aguardando direção local</Badge>}
+                {!qualifies && <Badge variant="outline">aguardando sinal ≥ 70%</Badge>}
                 {qualifies && aiLoading && <Badge variant="secondary" className="gap-1"><RefreshCw className="h-3 w-3 animate-spin" /> analisando</Badge>}
                 {qualifies && ai && (
                   <div className="flex items-center gap-2">
@@ -402,9 +471,10 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
               )}
               {!qualifies && (
                 <p className="text-xs text-muted-foreground">
-                  O DeepSeek será acionado assim que a análise local apontar uma direção (CALL ou PUT), mesmo com confiança baixa. Aguardando leitura…
+                  O DeepSeek será acionado quando a análise local apontar uma direção com <span className="font-medium text-foreground">70% ou mais</span> de confiança. Aguardando leitura…
                 </p>
               )}
+
               {aiError && <p className="text-xs text-muted-foreground">{aiError}</p>}
             </div>
           </section>
