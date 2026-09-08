@@ -363,6 +363,13 @@ class IqOptionClient {
 
   /** Detects zombie sockets and reconnects when the tab regains focus. */
   private startWatchdog() {
+    if (!this.heartbeatTimer) {
+      this.heartbeatTimer = setInterval(() => {
+        if (this.socket?.readyState !== WebSocket.OPEN) return;
+        const now = Date.now();
+        this.sendFrame({ name: "heartbeat", msg: { userTime: now, heartbeatTime: now } });
+      }, HEARTBEAT_INTERVAL_MS);
+    }
     if (this.watchdog) return;
     this.watchdog = setInterval(() => {
       if (!this.hasSubscriptions()) return;
@@ -370,14 +377,14 @@ class IqOptionClient {
       if (stale || !this.socket || this.socket.readyState !== WebSocket.OPEN) {
         this.hardReconnect();
       }
-    }, 30_000);
+    }, WATCHDOG_INTERVAL_MS);
   }
 
   private scheduleReconnect() {
     if (this.reconnectTimer || !this.hasSubscriptions()) return;
     this.reconnectAttempts += 1;
-    const exponential = Math.min(5_000 * 2 ** Math.min(this.reconnectAttempts - 1, 8), MAX_RECONNECT_DELAY_MS);
-    const delay = exponential + Math.floor(Math.random() * Math.min(2_000, exponential / 4));
+    const exponential = Math.min(1_000 * 2 ** Math.min(this.reconnectAttempts - 1, 8), MAX_RECONNECT_DELAY_MS);
+    const delay = exponential + Math.floor(Math.random() * Math.min(1_000, exponential / 4));
     this.nextReconnectAt = Date.now() + delay;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
@@ -385,8 +392,17 @@ class IqOptionClient {
     }, delay);
   }
 
-  hardReconnect() {
-    if (Date.now() < this.nextReconnectAt) return;
+  /** Immediate recovery: used by the watchdog and on tab focus / network back. */
+  hardReconnect(force = false) {
+    if (!force && Date.now() < this.nextReconnectAt) return;
+    if (force) {
+      this.nextReconnectAt = 0;
+      this.reconnectAttempts = 0;
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
+    }
     try {
       this.socket?.close();
     } catch {
@@ -400,6 +416,10 @@ class IqOptionClient {
     if (this.watchdog) {
       clearInterval(this.watchdog);
       this.watchdog = null;
+    }
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
     }
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
