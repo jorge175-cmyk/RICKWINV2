@@ -263,10 +263,21 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
             </span>
             <Switch id="analysis-power" checked={active} onCheckedChange={toggleActive} />
           </label>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => toggleSound(!soundOn)}
+            className="gap-1.5"
+            aria-label={soundOn ? "Desativar alerta sonoro" : "Ativar alerta sonoro"}
+          >
+            {soundOn ? <Volume2 className="h-3.5 w-3.5 text-accent" /> : <VolumeX className="h-3.5 w-3.5 text-muted-foreground" />}
+            <span className="hidden sm:inline">{soundOn ? "Som ligado" : "Som desligado"}</span>
+          </Button>
           <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={isFetching || !asset} className="gap-1.5">
             <RefreshCw className={`h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} />
             <span className="hidden sm:inline">Atualizar</span>
           </Button>
+
         </div>
       </CardHeader>
       <CardContent className="relative space-y-4">
