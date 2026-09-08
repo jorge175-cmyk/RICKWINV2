@@ -222,8 +222,9 @@ export async function openUpstreamSocket(): Promise<WebSocket> {
       },
     });
     if (!res.ok && res.status !== 101) {
-      const delay = registerLoginFailure(res.status, res);
-      await saveSharedLoginFailure(res.status, delay, `IQ Option socket unavailable (${res.status})`);
+      // A refused socket upgrade is a transport problem, not a credential
+      // problem. Keep the stored session so recovery needs no new login.
+      const delay = Math.max(retryAfterMs(res) ?? 0, res.status === 429 ? 60_000 : 3_000);
       throw new IqOptionBackoffError(`IQ Option socket unavailable (${res.status})`, delay);
     }
     const socket = res.webSocket as (WebSocket & { accept?: () => void }) | null | undefined;
