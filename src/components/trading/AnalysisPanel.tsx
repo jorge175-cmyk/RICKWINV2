@@ -352,7 +352,7 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
                 <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
                   <BrainCircuit className="h-4 w-4 text-accent" /> Veredito final — DeepSeek
                 </p>
-                {!qualifies && <Badge variant="outline">aguardando direção local</Badge>}
+                {!qualifies && <Badge variant="outline">aguardando sinal ≥ 70%</Badge>}
                 {qualifies && aiLoading && <Badge variant="secondary" className="gap-1"><RefreshCw className="h-3 w-3 animate-spin" /> analisando</Badge>}
                 {qualifies && ai && (
                   <div className="flex items-center gap-2">
@@ -403,9 +403,10 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
               )}
               {!qualifies && (
                 <p className="text-xs text-muted-foreground">
-                  O DeepSeek será acionado assim que a análise local apontar uma direção (CALL ou PUT), mesmo com confiança baixa. Aguardando leitura…
+                  O DeepSeek será acionado quando a análise local apontar uma direção com <span className="font-medium text-foreground">70% ou mais</span> de confiança. Aguardando leitura…
                 </p>
               )}
+
               {aiError && <p className="text-xs text-muted-foreground">{aiError}</p>}
             </div>
           </section>
