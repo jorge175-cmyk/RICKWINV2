@@ -402,7 +402,7 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
               )}
               {!qualifies && (
                 <p className="text-xs text-muted-foreground">
-                  O DeepSeek será acionado quando o sinal local atingir <span className="font-medium text-foreground">{finalDirection ?? "CALL/PUT"} ≥ 60%</span> de confiança. Aguardando confluência…
+                  O DeepSeek será acionado assim que a análise local apontar uma direção (CALL ou PUT), mesmo com confiança baixa. Aguardando leitura…
                 </p>
               )}
               {aiError && <p className="text-xs text-muted-foreground">{aiError}</p>}
