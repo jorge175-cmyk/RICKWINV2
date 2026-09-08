@@ -181,6 +181,32 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
   const ai = aiData?.verdict ?? null;
   const aiError = aiData?.error ?? null;
 
+  // ---- Alerta sonoro para novos vereditos do DeepSeek ----
+  const [soundOn, setSoundOn] = useState(true);
+  const lastAlertRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(SOUND_KEY);
+    if (stored !== null) setSoundOn(stored === "1");
+  }, []);
+
+  const toggleSound = (next: boolean) => {
+    setSoundOn(next);
+    window.localStorage.setItem(SOUND_KEY, next ? "1" : "0");
+  };
+
+  useEffect(() => {
+    if (!ai || !asset) return;
+    const key = `${asset}|${timeframe}|${verdictKey}|${ai.verdict}|${ai.direction}`;
+    if (lastAlertRef.current === key) return;
+    const first = lastAlertRef.current === null;
+    lastAlertRef.current = key;
+    if (first || !soundOn) return;
+    playVerdictAlert(ai.direction === "PUT" ? "PUT" : "CALL");
+  }, [ai, asset, timeframe, verdictKey, soundOn]);
+
+
+
 
 
   return (
