@@ -117,7 +117,7 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
 
   const recentCandles = useMemo(
     () =>
-      (candles ?? []).slice(-50).map((c) => ({
+      (candles ?? []).slice(-150).map((c) => ({
         time: c.time,
         open: c.open,
         high: c.high,
