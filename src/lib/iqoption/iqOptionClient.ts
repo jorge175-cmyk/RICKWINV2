@@ -31,8 +31,12 @@ type QuoteHandler = (quote: LiveQuote) => void;
 type StatusHandler = (status: StreamStatus, error?: string) => void;
 
 const PROXY_PATH = "/api/public/iqoption-ws";
-const ZOMBIE_TIMEOUT_MS = 45_000;
-const MAX_RECONNECT_DELAY_MS = 15 * 60_000;
+const ZOMBIE_TIMEOUT_MS = 20_000;
+const HEARTBEAT_INTERVAL_MS = 15_000;
+const WATCHDOG_INTERVAL_MS = 5_000;
+// The upstream session is reused, so reconnecting is cheap: retry fast and
+// cap the delay low so a dropped channel resumes within seconds.
+const MAX_RECONNECT_DELAY_MS = 60_000;
 
 class IqOptionClient {
   private socket: WebSocket | null = null;
