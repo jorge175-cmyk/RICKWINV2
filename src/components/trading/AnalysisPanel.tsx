@@ -351,7 +351,7 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
                 <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
                   <BrainCircuit className="h-4 w-4 text-accent" /> Veredito final — DeepSeek
                 </p>
-                {!qualifies && <Badge variant="outline">aguardando sinal forte</Badge>}
+                {!qualifies && <Badge variant="outline">aguardando direção local</Badge>}
                 {qualifies && aiLoading && <Badge variant="secondary" className="gap-1"><RefreshCw className="h-3 w-3 animate-spin" /> analisando</Badge>}
                 {qualifies && ai && (
                   <div className="flex items-center gap-2">
