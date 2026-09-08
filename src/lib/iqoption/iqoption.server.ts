@@ -266,6 +266,7 @@ interface SharedSession {
   send: (frame: unknown) => void;
   waitFor: (predicate: (frame: UpstreamFrame) => boolean, ms?: number) => Promise<UpstreamFrame>;
   touchedAt: number;
+  heartbeat: ReturnType<typeof setInterval> | null;
 }
 
 let sharedSession: SharedSession | null = null;
@@ -278,6 +279,8 @@ function discardSharedSession() {
   const session = sharedSession;
   sharedSession = null;
   if (!session) return;
+  if (session.heartbeat) clearInterval(session.heartbeat);
+  session.heartbeat = null;
   try {
     session.socket.close();
   } catch {
@@ -293,6 +296,7 @@ function armSessionIdleTimer(session: SharedSession) {
     }
   }, SESSION_IDLE_MS);
 }
+
 
 /** One authenticated upstream socket shared by all server requests in this worker. */
 async function createSharedSession(): Promise<SharedSession> {
