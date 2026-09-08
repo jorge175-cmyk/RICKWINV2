@@ -56,7 +56,7 @@ function ageLabel(updatedAt: number | undefined, now: number) {
 const ACTIVE_KEY = "binarypulse:analysis-active";
 const SOUND_KEY = "binarypulse:analysis-sound";
 
-/** Toca um bipe curto (Web Audio) quando chega um novo veredito do DeepSeek. */
+/** Toca um bipe curto (Web Audio) quando chega um novo veredito da IA. */
 function playVerdictAlert(direction: "CALL" | "PUT") {
   try {
     const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -160,7 +160,7 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
   );
   const structure = useMemo(() => analyseStructure(candles ?? []), [candles]);
 
-  // ---- DeepSeek final verdict: apenas sinais locais com 70% ou mais ----
+  // ---- Veredito final da IA: apenas sinais locais com 70% ou mais ----
   const finalDirection = (fused?.direction ?? result?.direction) as "CALL" | "PUT" | null | undefined;
   const finalConfidence = Math.max(fused?.confidence ?? 0, result?.confidence ?? 0);
   const qualifies = !!asset && !!finalDirection && finalConfidence >= 70;
@@ -169,7 +169,7 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
 
   const askDeepseek = useServerFn(deepseekVerdict);
   const { data: aiData, isFetching: aiLoading } = useQuery({
-    queryKey: ["deepseek", asset, timeframe, finalDirection, verdictKey],
+    queryKey: ["ia-verdict", asset, timeframe, finalDirection, verdictKey],
     queryFn: () =>
       askDeepseek({
         data: {
@@ -212,7 +212,7 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
   const ai = aiData?.verdict ?? null;
   const aiError = aiData?.error ?? null;
 
-  // ---- Alerta sonoro para novos vereditos do DeepSeek ----
+  // ---- Alerta sonoro para novos vereditos da IA ----
   const [soundOn, setSoundOn] = useState(true);
   const lastAlertRef = useRef<string | null>(null);
 
@@ -283,7 +283,7 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
       <CardContent className="relative space-y-4">
         {!active && (
           <p className="text-sm text-muted-foreground">
-            Análise pausada. Nenhum tick é processado e nenhum token do DeepSeek é consumido enquanto estiver desligada.
+            Análise pausada. Nenhum tick é processado e nenhum token da IA é consumido enquanto estiver desligada.
           </p>
         )}
         {active && !asset && <p className="text-sm text-muted-foreground">Selecione um ativo disponível para análise.</p>}
@@ -412,13 +412,13 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
         {asset && (
           <section
             className="relative overflow-hidden rounded-xl border border-accent/30 bg-surface/50 p-4 backdrop-blur-sm"
-            aria-label="Veredito final DeepSeek"
+            aria-label="Veredito final IA"
           >
             <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-r from-accent/15 via-transparent to-primary/10" />
             <div className="relative space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                  <BrainCircuit className="h-4 w-4 text-accent" /> Veredito final — DeepSeek
+                  <BrainCircuit className="h-4 w-4 text-accent" /> Veredito final — IA
                 </p>
                 {!qualifies && <Badge variant="outline">aguardando sinal ≥ 70%</Badge>}
                 {qualifies && aiLoading && <Badge variant="secondary" className="gap-1"><RefreshCw className="h-3 w-3 animate-spin" /> analisando</Badge>}
@@ -444,13 +444,13 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
                 <div className="grid gap-3 sm:grid-cols-[160px_1fr] sm:items-center">
                   <StrengthGauge
                     value={ai.confidence}
-                    label="Confiança DeepSeek"
+                    label="Confiança IA"
                     caption={`${ai.verdict} · ${ai.direction}`}
                     size={144}
                   />
                   <div className="space-y-2">
                     <p className="text-xs text-muted-foreground">
-                      Sinal local <span className="font-medium text-foreground">{finalDirection} {finalConfidence}%</span> enviado ao DeepSeek. Abaixo, o veredito para a próxima vela.
+                      Sinal local <span className="font-medium text-foreground">{finalDirection} {finalConfidence}%</span> enviado à IA. Abaixo, o veredito para a próxima vela.
                     </p>
                     {ai?.reasoning && <p className="text-sm text-foreground">{ai.reasoning}</p>}
                     {ai.risks.length > 0 && (
@@ -466,12 +466,12 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
 
               {qualifies && !ai && (
                 <p className="text-xs text-muted-foreground">
-                  Sinal local {finalDirection} {finalConfidence}% enviado ao DeepSeek para validação da próxima vela.
+                  Sinal local {finalDirection} {finalConfidence}% enviado à IA para validação da próxima vela.
                 </p>
               )}
               {!qualifies && (
                 <p className="text-xs text-muted-foreground">
-                  O DeepSeek será acionado quando a análise local apontar uma direção com <span className="font-medium text-foreground">70% ou mais</span> de confiança. Aguardando leitura…
+                  A IA será acionada quando a análise local apontar uma direção com <span className="font-medium text-foreground">70% ou mais</span> de confiança. Aguardando leitura…
                 </p>
               )}
 

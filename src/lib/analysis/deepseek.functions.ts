@@ -59,14 +59,14 @@ O campo "direction" é OBRIGATÓRIO em toda resposta: mesmo quando o veredito fo
 Responda SOMENTE com JSON válido no formato:
 {"verdict":"CONFIRMAR|AGUARDAR|INVERTER","direction":"CALL|PUT","confidence":0-100,"reasoning":"2-4 frases em português citando zonas, LTA/LTB e fluxo","risks":["risco 1","risco 2"]}`;
 
-/** Final verdict via DeepSeek — only called for signals above 80% confidence. */
+/** Final verdict via IA — only called for signals above 80% confidence. */
 export const deepseekVerdict = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => inputSchema.parse(input))
   .handler(async ({ data }): Promise<{ verdict: DeepseekVerdict | null; error?: string }> => {
     const apiKey = process.env['DEEPSEEK_API_KEY'];
     if (!apiKey) {
-      return { verdict: null, error: "Chave da API DeepSeek não configurada." };
+      return { verdict: null, error: "Chave da API não configurada." };
     }
 
     const payload = {
@@ -103,15 +103,15 @@ export const deepseekVerdict = createServerFn({ method: "POST" })
       if (!response.ok) {
         const body = await response.text();
         console.error("[deepseek] error", response.status, body.slice(0, 400));
-        if (response.status === 401) return { verdict: null, error: "Chave DeepSeek inválida." };
-        if (response.status === 402) return { verdict: null, error: "Saldo insuficiente na conta DeepSeek." };
-        if (response.status === 429) return { verdict: null, error: "Limite de requisições DeepSeek atingido." };
-        return { verdict: null, error: "DeepSeek indisponível no momento." };
+        if (response.status === 401) return { verdict: null, error: "Chave de API inválida." };
+        if (response.status === 402) return { verdict: null, error: "Saldo insuficiente na conta de API." };
+        if (response.status === 429) return { verdict: null, error: "Limite de requisições atingido." };
+        return { verdict: null, error: "Serviço de IA indisponível no momento." };
       }
 
       const json = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
       const content = json.choices?.[0]?.message?.content;
-      if (!content) return { verdict: null, error: "Resposta vazia do DeepSeek." };
+      if (!content) return { verdict: null, error: "Resposta vazia do serviço de IA." };
 
       const parsed = JSON.parse(content) as Partial<DeepseekVerdict>;
       const verdict: DeepseekVerdict = {
@@ -127,6 +127,6 @@ export const deepseekVerdict = createServerFn({ method: "POST" })
       return { verdict };
     } catch (error) {
       console.error("[deepseek] failed", error);
-      return { verdict: null, error: "Falha ao consultar o DeepSeek." };
+      return { verdict: null, error: "Falha ao consultar o serviço de IA." };
     }
   });
