@@ -86,7 +86,8 @@ export const deepseekVerdict = createServerFn({ method: "POST" })
         },
         body: JSON.stringify({
           model: "deepseek-chat",
-          temperature: 0.2,
+          temperature: 0.15,
+          max_tokens: 1200,
           response_format: { type: "json_object" },
           messages: [
             { role: "system", content: SYSTEM_PROMPT },
