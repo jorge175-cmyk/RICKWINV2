@@ -31,8 +31,12 @@ type QuoteHandler = (quote: LiveQuote) => void;
 type StatusHandler = (status: StreamStatus, error?: string) => void;
 
 const PROXY_PATH = "/api/public/iqoption-ws";
-const ZOMBIE_TIMEOUT_MS = 45_000;
-const MAX_RECONNECT_DELAY_MS = 15 * 60_000;
+const ZOMBIE_TIMEOUT_MS = 20_000;
+const HEARTBEAT_INTERVAL_MS = 15_000;
+const WATCHDOG_INTERVAL_MS = 5_000;
+// The upstream session is reused, so reconnecting is cheap: retry fast and
+// cap the delay low so a dropped channel resumes within seconds.
+const MAX_RECONNECT_DELAY_MS = 60_000;
 
 class IqOptionClient {
   private socket: WebSocket | null = null;
@@ -50,6 +54,7 @@ class IqOptionClient {
   private lastFrameAt = 0;
   private reconnectAttempts = 0;
   private watchdog: ReturnType<typeof setInterval> | null = null;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private nextReconnectAt = 0;
 
@@ -358,6 +363,13 @@ class IqOptionClient {
 
   /** Detects zombie sockets and reconnects when the tab regains focus. */
   private startWatchdog() {
+    if (!this.heartbeatTimer) {
+      this.heartbeatTimer = setInterval(() => {
+        if (this.socket?.readyState !== WebSocket.OPEN) return;
+        const now = Date.now();
+        this.sendFrame({ name: "heartbeat", msg: { userTime: now, heartbeatTime: now } });
+      }, HEARTBEAT_INTERVAL_MS);
+    }
     if (this.watchdog) return;
     this.watchdog = setInterval(() => {
       if (!this.hasSubscriptions()) return;
@@ -365,14 +377,14 @@ class IqOptionClient {
       if (stale || !this.socket || this.socket.readyState !== WebSocket.OPEN) {
         this.hardReconnect();
       }
-    }, 30_000);
+    }, WATCHDOG_INTERVAL_MS);
   }
 
   private scheduleReconnect() {
     if (this.reconnectTimer || !this.hasSubscriptions()) return;
     this.reconnectAttempts += 1;
-    const exponential = Math.min(5_000 * 2 ** Math.min(this.reconnectAttempts - 1, 8), MAX_RECONNECT_DELAY_MS);
-    const delay = exponential + Math.floor(Math.random() * Math.min(2_000, exponential / 4));
+    const exponential = Math.min(1_000 * 2 ** Math.min(this.reconnectAttempts - 1, 8), MAX_RECONNECT_DELAY_MS);
+    const delay = exponential + Math.floor(Math.random() * Math.min(1_000, exponential / 4));
     this.nextReconnectAt = Date.now() + delay;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
@@ -380,8 +392,17 @@ class IqOptionClient {
     }, delay);
   }
 
-  hardReconnect() {
-    if (Date.now() < this.nextReconnectAt) return;
+  /** Immediate recovery: used by the watchdog and on tab focus / network back. */
+  hardReconnect(force = false) {
+    if (!force && Date.now() < this.nextReconnectAt) return;
+    if (force) {
+      this.nextReconnectAt = 0;
+      this.reconnectAttempts = 0;
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
+    }
     try {
       this.socket?.close();
     } catch {
@@ -395,6 +416,10 @@ class IqOptionClient {
     if (this.watchdog) {
       clearInterval(this.watchdog);
       this.watchdog = null;
+    }
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
     }
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);

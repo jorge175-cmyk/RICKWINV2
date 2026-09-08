@@ -8,10 +8,14 @@ const IQ_LOGIN_URL = "https://auth.iqoption.com/api/v2/login";
 // IQ Option sessions normally outlive a worker instance by days. Refreshing
 // them every few hours caused avoidable login bursts from serverless workers.
 const SSID_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-const SESSION_IDLE_MS = 4 * 60 * 1000;
+// Keep the authenticated upstream socket for as long as the worker lives; a
+// heartbeat keeps it warm so no re-login is ever needed for normal usage.
+const SESSION_IDLE_MS = 30 * 60 * 1000;
+const HEARTBEAT_INTERVAL_MS = 20_000;
 const MAX_BACKOFF_MS = 60 * 60 * 1000;
 const LOGIN_LEASE_SECONDS = 25;
 const LOGIN_WAIT_ATTEMPTS = 15;
+
 
 let cachedSsid: { value: string; expiresAt: number } | null = null;
 let ssidPromise: Promise<string> | null = null;
@@ -218,8 +222,9 @@ export async function openUpstreamSocket(): Promise<WebSocket> {
       },
     });
     if (!res.ok && res.status !== 101) {
-      const delay = registerLoginFailure(res.status, res);
-      await saveSharedLoginFailure(res.status, delay, `IQ Option socket unavailable (${res.status})`);
+      // A refused socket upgrade is a transport problem, not a credential
+      // problem. Keep the stored session so recovery needs no new login.
+      const delay = Math.max(retryAfterMs(res) ?? 0, res.status === 429 ? 60_000 : 3_000);
       throw new IqOptionBackoffError(`IQ Option socket unavailable (${res.status})`, delay);
     }
     const socket = res.webSocket as (WebSocket & { accept?: () => void }) | null | undefined;
@@ -261,6 +266,7 @@ interface SharedSession {
   send: (frame: unknown) => void;
   waitFor: (predicate: (frame: UpstreamFrame) => boolean, ms?: number) => Promise<UpstreamFrame>;
   touchedAt: number;
+  heartbeat: ReturnType<typeof setInterval> | null;
 }
 
 let sharedSession: SharedSession | null = null;
@@ -273,6 +279,8 @@ function discardSharedSession() {
   const session = sharedSession;
   sharedSession = null;
   if (!session) return;
+  if (session.heartbeat) clearInterval(session.heartbeat);
+  session.heartbeat = null;
   try {
     session.socket.close();
   } catch {
@@ -288,6 +296,7 @@ function armSessionIdleTimer(session: SharedSession) {
     }
   }, SESSION_IDLE_MS);
 }
+
 
 /** One authenticated upstream socket shared by all server requests in this worker. */
 async function createSharedSession(): Promise<SharedSession> {
@@ -340,9 +349,24 @@ async function createSharedSession(): Promise<SharedSession> {
     throw error;
   }
 
-  const session: SharedSession = { socket, send, waitFor, touchedAt: Date.now() };
+  const session: SharedSession = { socket, send, waitFor, touchedAt: Date.now(), heartbeat: null };
+  // A periodic heartbeat keeps the authenticated socket alive, so the session
+  // survives quiet periods and never needs a fresh login.
+  session.heartbeat = setInterval(() => {
+    if (socket.readyState !== 1) return;
+    try {
+      const now = Date.now();
+      send({ name: "heartbeat", msg: { userTime: now, heartbeatTime: now } });
+    } catch {
+      // socket died; the close listener handles recovery
+    }
+  }, HEARTBEAT_INTERVAL_MS);
   const invalidate = () => {
     if (sharedSession === session) discardSharedSession();
+    else if (session.heartbeat) {
+      clearInterval(session.heartbeat);
+      session.heartbeat = null;
+    }
   };
   socket.addEventListener("close", invalidate);
   socket.addEventListener("error", invalidate);
@@ -371,6 +395,7 @@ async function getSharedSession(): Promise<SharedSession> {
 
 async function withSession<T>(
   fn: (send: SharedSession["send"], waitFor: SharedSession["waitFor"]) => Promise<T>,
+  attempt = 0,
 ): Promise<T> {
   const session = await getSharedSession();
   session.touchedAt = Date.now();
@@ -381,6 +406,10 @@ async function withSession<T>(
     // Do not log in again here. Drop only the failed socket; getSsid remains
     // cached, so the next request reconnects without hitting the login API.
     discardSharedSession();
+    // A dead socket recovers instantly on a fresh one with the same session.
+    if (attempt === 0 && !(error instanceof IqOptionBackoffError)) {
+      return withSession(fn, attempt + 1);
+    }
     throw error;
   }
 }

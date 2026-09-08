@@ -361,7 +361,7 @@ class CandleStore {
 
     const resync = () => {
       if (document.visibilityState === "hidden") return;
-      iqOptionClient.hardReconnect();
+      iqOptionClient.hardReconnect(true);
       for (const entry of this.entries.values()) void this.loadHistory(entry, true);
     };
 

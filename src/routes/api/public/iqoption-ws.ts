@@ -85,6 +85,18 @@ export const Route = createFileRoute("/api/public/iqoption-ws")({
                 for (const queued of pending.splice(0)) upstream.send(queued);
                 server.send(JSON.stringify({ name: "proxy-ready", msg: { ok: true } }));
               }
+              // Answering the provider heartbeat keeps this channel alive for
+              // hours instead of being dropped as idle.
+              if (frame.name === "heartbeat") {
+                const now = Date.now();
+                const msg = (frame.msg ?? {}) as { serverTime?: number };
+                upstream.send(
+                  JSON.stringify({
+                    name: "heartbeat",
+                    msg: { userTime: now, heartbeatTime: msg.serverTime ?? now },
+                  }),
+                );
+              }
               server.send(data);
             } catch {
               // client gone
