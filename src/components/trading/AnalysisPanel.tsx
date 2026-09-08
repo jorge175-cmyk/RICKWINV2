@@ -129,11 +129,12 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
   );
   const structure = useMemo(() => analyseStructure(candles ?? []), [candles]);
 
-  // ---- DeepSeek final verdict: sempre que houver direção local (mesmo fraca) ----
+  // ---- DeepSeek final verdict: apenas sinais locais com 70% ou mais ----
   const finalDirection = (fused?.direction ?? result?.direction) as "CALL" | "PUT" | null | undefined;
   const finalConfidence = Math.max(fused?.confidence ?? 0, result?.confidence ?? 0);
-  const qualifies = !!asset && !!finalDirection;
+  const qualifies = !!asset && !!finalDirection && finalConfidence >= 70;
   const verdictKey = closedDominance?.candleTime ?? result?.generatedAt ?? "n/a";
+
 
   const askDeepseek = useServerFn(deepseekVerdict);
   const { data: aiData, isFetching: aiLoading } = useQuery({
