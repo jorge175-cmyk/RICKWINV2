@@ -115,7 +115,9 @@ export const deepseekVerdict = createServerFn({ method: "POST" })
       const verdict: DeepseekVerdict = {
         verdict:
           parsed.verdict === "CONFIRMAR" || parsed.verdict === "INVERTER" ? parsed.verdict : "AGUARDAR",
-        direction: parsed.direction === "CALL" || parsed.direction === "PUT" ? parsed.direction : null,
+        // Sempre expor uma direção: usa a do DeepSeek ou, na falta, a direção do sinal local.
+        direction:
+          parsed.direction === "CALL" || parsed.direction === "PUT" ? parsed.direction : data.direction,
         confidence: Math.max(0, Math.min(100, Math.round(Number(parsed.confidence) || 0))),
         reasoning: typeof parsed.reasoning === "string" ? parsed.reasoning : "",
         risks: Array.isArray(parsed.risks) ? parsed.risks.filter((r): r is string => typeof r === "string").slice(0, 4) : [],

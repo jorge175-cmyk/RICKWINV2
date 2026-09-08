@@ -129,10 +129,10 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
   );
   const structure = useMemo(() => analyseStructure(candles ?? []), [candles]);
 
-  // ---- DeepSeek final verdict: entries at or above 60% ----
+  // ---- DeepSeek final verdict: sempre que houver direção local (mesmo fraca) ----
   const finalDirection = (fused?.direction ?? result?.direction) as "CALL" | "PUT" | null | undefined;
   const finalConfidence = Math.max(fused?.confidence ?? 0, result?.confidence ?? 0);
-  const qualifies = !!asset && !!finalDirection && finalConfidence >= 60;
+  const qualifies = !!asset && !!finalDirection;
   const verdictKey = closedDominance?.candleTime ?? result?.generatedAt ?? "n/a";
 
   const askDeepseek = useServerFn(deepseekVerdict);
