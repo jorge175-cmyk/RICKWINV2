@@ -165,6 +165,7 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
             fusao: fused,
             price_action: result?.metrics.priceAction,
             estrutura: structure,
+            linhas_tendencia: structure?.trendLines,
             manipulacao: structure?.manipulation,
           },
           candles: recentCandles,
