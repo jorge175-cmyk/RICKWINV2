@@ -349,9 +349,24 @@ async function createSharedSession(): Promise<SharedSession> {
     throw error;
   }
 
-  const session: SharedSession = { socket, send, waitFor, touchedAt: Date.now() };
+  const session: SharedSession = { socket, send, waitFor, touchedAt: Date.now(), heartbeat: null };
+  // A periodic heartbeat keeps the authenticated socket alive, so the session
+  // survives quiet periods and never needs a fresh login.
+  session.heartbeat = setInterval(() => {
+    if (socket.readyState !== 1) return;
+    try {
+      const now = Date.now();
+      send({ name: "heartbeat", msg: { userTime: now, heartbeatTime: now } });
+    } catch {
+      // socket died; the close listener handles recovery
+    }
+  }, HEARTBEAT_INTERVAL_MS);
   const invalidate = () => {
     if (sharedSession === session) discardSharedSession();
+    else if (session.heartbeat) {
+      clearInterval(session.heartbeat);
+      session.heartbeat = null;
+    }
   };
   socket.addEventListener("close", invalidate);
   socket.addEventListener("error", invalidate);
