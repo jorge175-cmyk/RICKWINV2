@@ -38,6 +38,8 @@ export interface StructureAnalysis {
   /** true when price sits close to a reversal zone */
   reversalRisk: boolean;
   manipulation: ManipulationFlags;
+  /** LTA/LTB trendlines fitted on recent pivots */
+  trendLines: TrendLineAnalysis | null;
 }
 
 const clusterLevels = (values: number[], tolerance: number): Array<{ price: number; touches: number }> => {
