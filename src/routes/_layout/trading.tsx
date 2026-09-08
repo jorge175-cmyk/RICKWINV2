@@ -155,7 +155,7 @@ function TradingSignalsPage() {
               icon: TrendingUp,
               label: "Pares monitorados",
               value: String(assetOptions.length),
-              caption: `${otcAssets.length} mercados OTC da IQ Option incluídos`,
+              caption: `${assetOptions.filter((a) => a.category === "MERCADO REAL").length} mercado real · ${assetOptions.filter((a) => a.category === "OTC").length} OTC`,
               image: cardTexture,
               tone: "from-primary/25 via-primary/5 to-transparent",
             },
