@@ -74,6 +74,8 @@ export const deepseekVerdict = createServerFn({ method: "POST" })
       indicadores: data.indicators,
       velas_recentes: data.candles ?? [],
       estrutura_suporte_resistencia: data.structure ?? null,
+      linhas_de_tendencia: (data.structure as { trendLines?: unknown } | undefined)?.trendLines ?? null,
+      total_velas_enviadas: data.candles?.length ?? 0,
       price_action: data.priceAction ?? null,
     };
 
