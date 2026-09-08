@@ -8,10 +8,14 @@ const IQ_LOGIN_URL = "https://auth.iqoption.com/api/v2/login";
 // IQ Option sessions normally outlive a worker instance by days. Refreshing
 // them every few hours caused avoidable login bursts from serverless workers.
 const SSID_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-const SESSION_IDLE_MS = 4 * 60 * 1000;
+// Keep the authenticated upstream socket for as long as the worker lives; a
+// heartbeat keeps it warm so no re-login is ever needed for normal usage.
+const SESSION_IDLE_MS = 30 * 60 * 1000;
+const HEARTBEAT_INTERVAL_MS = 20_000;
 const MAX_BACKOFF_MS = 60 * 60 * 1000;
 const LOGIN_LEASE_SECONDS = 25;
 const LOGIN_WAIT_ATTEMPTS = 15;
+
 
 let cachedSsid: { value: string; expiresAt: number } | null = null;
 let ssidPromise: Promise<string> | null = null;
