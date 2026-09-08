@@ -129,7 +129,7 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
   );
   const structure = useMemo(() => analyseStructure(candles ?? []), [candles]);
 
-  // ---- DeepSeek final verdict: only for entries above 80% ----
+  // ---- DeepSeek final verdict: entries at or above 60% ----
   const finalDirection = (fused?.direction ?? result?.direction) as "CALL" | "PUT" | null | undefined;
   const finalConfidence = Math.max(fused?.confidence ?? 0, result?.confidence ?? 0);
   const qualifies = !!asset && !!finalDirection && finalConfidence >= 80;
