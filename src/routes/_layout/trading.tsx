@@ -65,7 +65,7 @@ function TradingSignalsPage() {
     queryFn: getWinRate,
   });
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
-  const [timeframe, setTimeframe] = useState("M5");
+  const [timeframe, setTimeframe] = useState("M1");
 
   const { data: otcAssets = [] } = useQuery({
     queryKey: ["otcAssets"],
@@ -73,15 +73,27 @@ function TradingSignalsPage() {
     staleTime: 30 * 60 * 1000,
   });
 
+  const isOtc = (symbol: string) => /-?OTC$/i.test(symbol.trim());
   const streamablePairs = pairs.filter((p) => getIqOptionName(p.symbol));
   const assetOptions = [
     ...streamablePairs.map((p) => ({
       symbol: p.symbol,
       name: (p as any).name ?? null,
-      category: (p as any).category ?? null,
+      category: isOtc(p.symbol) ? "OTC" : "MERCADO REAL",
     })),
-    ...otcAssets.map((a) => ({ symbol: a.symbol, name: a.name, category: a.category })),
-  ];
+    ...otcAssets.map((a) => ({
+      symbol: a.symbol,
+      name: a.name,
+      category: isOtc(a.symbol) ? "OTC" : "MERCADO REAL",
+    })),
+  ].sort((a, b) =>
+    a.category === b.category
+      ? a.symbol.localeCompare(b.symbol)
+      : a.category === "MERCADO REAL"
+        ? -1
+        : 1,
+  );
+
   const activeSymbol = selectedSymbol ?? assetOptions[0]?.symbol ?? null;
   useKeepWarm(
     streamablePairs.slice(0, 4).map((p) => p.symbol),
