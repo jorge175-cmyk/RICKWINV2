@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -13,6 +13,8 @@ import {
   RefreshCw,
   Sparkles,
   Timer,
+  Volume2,
+  VolumeX,
   Waves,
 } from "lucide-react";
 import chartTexture from "@/assets/card-texture.jpg";
@@ -52,6 +54,35 @@ function ageLabel(updatedAt: number | undefined, now: number) {
 }
 
 const ACTIVE_KEY = "binarypulse:analysis-active";
+const SOUND_KEY = "binarypulse:analysis-sound";
+
+/** Toca um bipe curto (Web Audio) quando chega um novo veredito do DeepSeek. */
+function playVerdictAlert(direction: "CALL" | "PUT") {
+  try {
+    const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    void ctx.resume().catch(() => {});
+    const notes = direction === "CALL" ? [660, 880] : [520, 380];
+    notes.forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      const start = ctx.currentTime + 0.05 + i * 0.18;
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(0.25, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.16);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(start);
+      osc.stop(start + 0.18);
+    });
+    window.setTimeout(() => void ctx.close().catch(() => {}), 1_200);
+  } catch {
+    // áudio indisponível — alerta visual continua funcionando
+  }
+}
 
 export function AnalysisPanel({ symbol, timeframe }: Props) {
   const [active, setActive] = useState(true);
