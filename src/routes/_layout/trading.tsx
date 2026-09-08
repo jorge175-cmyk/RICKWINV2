@@ -75,18 +75,24 @@ function TradingSignalsPage() {
 
   const isOtc = (symbol: string) => /-?OTC$/i.test(symbol.trim());
   const streamablePairs = pairs.filter((p) => getIqOptionName(p.symbol));
-  const assetOptions = [
-    ...streamablePairs.map((p) => ({
+  const merged = new Map<string, { symbol: string; name: string | null; category: string }>();
+  for (const p of streamablePairs) {
+    merged.set(p.symbol.toUpperCase(), {
       symbol: p.symbol,
       name: (p as any).name ?? null,
       category: isOtc(p.symbol) ? "OTC" : "MERCADO REAL",
-    })),
-    ...otcAssets.map((a) => ({
+    });
+  }
+  for (const a of otcAssets) {
+    const key = a.symbol.toUpperCase();
+    if (merged.has(key)) continue;
+    merged.set(key, {
       symbol: a.symbol,
       name: a.name,
       category: isOtc(a.symbol) ? "OTC" : "MERCADO REAL",
-    })),
-  ].sort((a, b) =>
+    });
+  }
+  const assetOptions = [...merged.values()].sort((a, b) =>
     a.category === b.category
       ? a.symbol.localeCompare(b.symbol)
       : a.category === "MERCADO REAL"
@@ -96,8 +102,9 @@ function TradingSignalsPage() {
 
   const activeSymbol = selectedSymbol ?? assetOptions[0]?.symbol ?? null;
   useKeepWarm(
-    streamablePairs.slice(0, 4).map((p) => p.symbol),
+    assetOptions.slice(0, 4).map((p) => p.symbol),
     timeframe,
+
   );
 
   const handleSignOut = async () => {
@@ -148,7 +155,7 @@ function TradingSignalsPage() {
               icon: TrendingUp,
               label: "Pares monitorados",
               value: String(assetOptions.length),
-              caption: `${otcAssets.length} mercados OTC da IQ Option incluídos`,
+              caption: `${assetOptions.filter((a) => a.category === "MERCADO REAL").length} mercado real · ${assetOptions.filter((a) => a.category === "OTC").length} OTC`,
               image: cardTexture,
               tone: "from-primary/25 via-primary/5 to-transparent",
             },

@@ -38,7 +38,11 @@ export interface OtcAsset {
   category: string;
 }
 
-/** OTC markets currently exposed by the IQ Option connection. */
+function prettyName(base: string) {
+  return /^[A-Z]{6}$/.test(base) ? `${base.slice(0, 3)}/${base.slice(3)}` : base;
+}
+
+/** Markets currently exposed by the IQ Option connection (real + OTC). */
 export const getOtcAssets = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async (): Promise<OtcAsset[]> => {
@@ -46,29 +50,29 @@ export const getOtcAssets = createServerFn({ method: "GET" })
     try {
       const map = await getActiveIdMap();
       return Object.keys(map)
-        .filter((name) => name.endsWith("-OTC"))
+        .filter((name) => !/-(OP|L)$/.test(name))
         .map((name) => {
+          const otc = name.endsWith("-OTC");
           const base = name.replace(/-OTC$/, "");
-          const isForex = /^[A-Z]{6}$/.test(base);
-          const pretty = isForex ? `${base.slice(0, 3)}/${base.slice(3)}` : base;
           return {
             symbol: name,
-            name: `${pretty} OTC`,
-            category: isForex ? "FOREX OTC" : "OUTROS OTC",
+            name: otc ? `${prettyName(base)} OTC` : prettyName(base),
+            category: otc ? "OTC" : "MERCADO REAL",
           };
         })
         .sort((a, b) =>
           a.category === b.category
             ? a.symbol.localeCompare(b.symbol)
-            : a.category === "FOREX OTC"
+            : a.category === "MERCADO REAL"
               ? -1
               : 1,
         );
     } catch (error) {
-      console.error("[iqoption] otc asset list failed", error);
+      console.error("[iqoption] asset list failed", error);
       return [];
     }
   });
+
 
 /** Asset name -> IQ Option active_id, needed for live subscriptions. */
 export const getActiveIds = createServerFn({ method: "GET" })
