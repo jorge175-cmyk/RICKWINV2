@@ -1,4 +1,5 @@
 import type { CandleData } from "@/lib/iqoption/mapping";
+import { analyseTrendLines, type TrendLineAnalysis } from "./trendlines";
 
 export interface PriceZone {
   /** zone center price */
