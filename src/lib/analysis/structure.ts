@@ -147,5 +147,6 @@ export function analyseStructure(candles: CandleData[]): StructureAnalysis | nul
       (nearestResistancePct !== null && nearestResistancePct < 0.05) ||
       (nearestSupportPct !== null && nearestSupportPct < 0.05),
     manipulation: { wickHunts, falseBreaks, spikes, stalls, insideZone, notes },
+    trendLines: analyseTrendLines(candles),
   };
 }
