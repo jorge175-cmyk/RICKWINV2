@@ -19,7 +19,7 @@ const inputSchema = z.object({
         volume: z.number().optional(),
       }),
     )
-    .max(50)
+    .max(200)
     .optional(),
   structure: z.record(z.string(), z.unknown()).optional(),
   priceAction: z.record(z.string(), z.unknown()).optional(),
