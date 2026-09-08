@@ -54,6 +54,7 @@ class IqOptionClient {
   private lastFrameAt = 0;
   private reconnectAttempts = 0;
   private watchdog: ReturnType<typeof setInterval> | null = null;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private nextReconnectAt = 0;
 
