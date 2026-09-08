@@ -395,6 +395,7 @@ async function getSharedSession(): Promise<SharedSession> {
 
 async function withSession<T>(
   fn: (send: SharedSession["send"], waitFor: SharedSession["waitFor"]) => Promise<T>,
+  attempt = 0,
 ): Promise<T> {
   const session = await getSharedSession();
   session.touchedAt = Date.now();
@@ -405,6 +406,10 @@ async function withSession<T>(
     // Do not log in again here. Drop only the failed socket; getSsid remains
     // cached, so the next request reconnects without hitting the login API.
     discardSharedSession();
+    // A dead socket recovers instantly on a fresh one with the same session.
+    if (attempt === 0 && !(error instanceof IqOptionBackoffError)) {
+      return withSession(fn, attempt + 1);
+    }
     throw error;
   }
 }
