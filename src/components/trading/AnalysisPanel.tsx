@@ -132,7 +132,7 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
   // ---- DeepSeek final verdict: entries at or above 60% ----
   const finalDirection = (fused?.direction ?? result?.direction) as "CALL" | "PUT" | null | undefined;
   const finalConfidence = Math.max(fused?.confidence ?? 0, result?.confidence ?? 0);
-  const qualifies = !!asset && !!finalDirection && finalConfidence >= 80;
+  const qualifies = !!asset && !!finalDirection && finalConfidence >= 60;
   const verdictKey = closedDominance?.candleTime ?? result?.generatedAt ?? "n/a";
 
   const askDeepseek = useServerFn(deepseekVerdict);
