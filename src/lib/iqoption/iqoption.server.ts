@@ -93,6 +93,11 @@ async function saveSharedLoginFailure(status: number, delay: number, reason: str
   const { error } = await supabaseAdmin
     .from("iqoption_connection_state")
     .update({
+      // A provider rejection means the persisted credential can no longer be
+      // trusted. Clearing it also makes every worker honor the shared cooldown
+      // instead of repeatedly opening sockets with a stale session.
+      ssid: null,
+      ssid_expires_at: null,
       login_blocked_until: new Date(Date.now() + delay).toISOString(),
       login_blocked_reason: reason,
       login_failures: loginFailures,
