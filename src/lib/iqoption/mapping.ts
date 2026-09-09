@@ -28,12 +28,15 @@ export function getIqOptionName(symbol: string | null | undefined): string | nul
   // Preserve IQ Option market suffixes (-OTC weekend markets, -OP options FX).
   const suffix = /-(OTC|OP|L)$/.exec(raw)?.[1];
   const base = suffix ? raw.replace(/-(OTC|OP|L)$/, "") : raw;
-  const mappedBase = EXPLICIT_MAP[base] ?? base.replace(/[^A-Z]/g, "");
+  const mappedBase = EXPLICIT_MAP[base] ?? base.replace(/[^A-Z0-9]/g, "");
   const known = Object.values(EXPLICIT_MAP).includes(mappedBase);
-  if (known || /^[A-Z]{6}$/.test(mappedBase) || (suffix && /^[A-Z]{3,10}$/.test(mappedBase))) {
+  if (known || /^[A-Z]{6}$/.test(mappedBase) || (suffix && /^[A-Z0-9]{3,12}$/.test(mappedBase))) {
     return suffix ? `${mappedBase}-${suffix}` : mappedBase;
   }
+  // Símbolos vindos direto da IQ Option (ações, índices, cripto) já são nomes válidos.
+  if (!raw.includes("/") && /^[A-Z0-9][A-Z0-9._-]{1,19}$/.test(raw)) return raw;
   return null;
+
 }
 
 export const TIMEFRAMES = {

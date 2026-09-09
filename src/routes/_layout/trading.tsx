@@ -100,7 +100,14 @@ function TradingSignalsPage() {
         : 1,
   );
 
-  const activeSymbol = selectedSymbol ?? assetOptions[0]?.symbol ?? null;
+  // Padrão: EUR/USD quando disponível (evita abrir em ações/índices).
+  const defaultAsset =
+    assetOptions.find((a) => /^EUR\/?USD$/i.test(a.symbol.trim())) ??
+    assetOptions.find((a) => /^[A-Z]{3}\/[A-Z]{3}$/.test(a.symbol.trim().toUpperCase())) ??
+    assetOptions[0];
+
+  const activeSymbol = selectedSymbol ?? defaultAsset?.symbol ?? null;
+
   useKeepWarm(
     assetOptions.slice(0, 4).map((p) => p.symbol),
     timeframe,
