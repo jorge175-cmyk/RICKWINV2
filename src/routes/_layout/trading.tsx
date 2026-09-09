@@ -18,6 +18,8 @@ import { getOtcAssets } from "@/lib/iqoption/candles.functions";
 import { useKeepWarm } from "@/lib/iqoption/useIqOptionStream";
 import { Clock, TrendingUp, Zap, Star, LogOut, User } from "lucide-react";
 
+/** Pares principais sempre disponíveis, para o painel abrir sem esperar a corretora. */
+const FALLBACK_PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CHF", "USD/CAD"];
 
 export const Route = createFileRoute("/_layout/trading")({
   loader: async ({ context: { queryClient } }) => {
@@ -76,6 +78,10 @@ function TradingSignalsPage() {
   const isOtc = (symbol: string) => /-?OTC$/i.test(symbol.trim());
   const streamablePairs = pairs.filter((p) => getIqOptionName(p.symbol));
   const merged = new Map<string, { symbol: string; name: string | null; category: string }>();
+  // Base garantida: pares principais aparecem imediatamente, sem esperar a corretora.
+  for (const symbol of FALLBACK_PAIRS) {
+    merged.set(symbol.toUpperCase(), { symbol, name: null, category: "MERCADO REAL" });
+  }
   for (const p of streamablePairs) {
     merged.set(p.symbol.toUpperCase(), {
       symbol: p.symbol,
@@ -92,6 +98,7 @@ function TradingSignalsPage() {
       category: isOtc(a.symbol) ? "OTC" : "MERCADO REAL",
     });
   }
+
   const assetOptions = [...merged.values()].sort((a, b) =>
     a.category === b.category
       ? a.symbol.localeCompare(b.symbol)
