@@ -118,11 +118,25 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
     },
     enabled: !!asset,
     staleTime: 30_000,
+    placeholderData: (previous) => previous,
     refetchInterval: (query) => query.state.data?.retryAfterMs ? false : 60_000,
   });
 
-  const result = data?.result ?? null;
+  // Mantém a última leitura válida para o painel não sumir quando uma
+  // atualização falha (backoff da corretora, rede instável, etc.).
+  const lastResultRef = useRef<{ key: string; result: AnalysisResult } | null>(null);
+  const contextKey = `${asset ?? "none"}|${timeframe}`;
+  if (data?.result) {
+    lastResultRef.current = { key: contextKey, result: data.result };
+  } else if (lastResultRef.current && lastResultRef.current.key !== contextKey) {
+    lastResultRef.current = null;
+  }
+
+  const result =
+    data?.result ?? (lastResultRef.current?.key === contextKey ? lastResultRef.current.result : null);
+  const isStale = !data?.result && !!result;
   const message = data?.error ?? (error ? "Análise indisponível." : null);
+
   const direction = result?.direction;
   const fused = useMemo(
     () =>
