@@ -505,6 +505,12 @@ export function AnalysisPanel({ symbol, timeframe }: Props) {
 
         {result && (
           <section className="space-y-4 border-t border-border/50 pt-4" aria-label="Análise técnica de candles">
+            {isStale && (
+              <p className="text-xs text-muted-foreground">
+                Mostrando a última leitura válida — atualizando assim que os dados voltarem.
+              </p>
+            )}
+
             <div className="flex flex-wrap items-center gap-4">
               <div
                 className={`flex items-center gap-2 rounded-xl px-4 py-2 font-display text-lg font-bold ${
