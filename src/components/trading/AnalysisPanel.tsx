@@ -25,6 +25,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { analyzeAsset } from "@/lib/analysis/analysis.functions";
+import type { AnalysisResult } from "@/lib/analysis/strategy";
+
 import { deepseekVerdict } from "@/lib/analysis/deepseek.functions";
 import { analyseStructure } from "@/lib/analysis/structure";
 import { fuseDominanceWithIndicators } from "@/lib/analysis/candleDominance";
