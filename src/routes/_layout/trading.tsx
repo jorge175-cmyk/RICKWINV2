@@ -100,7 +100,13 @@ function TradingSignalsPage() {
         : 1,
   );
 
-  const activeSymbol = selectedSymbol ?? assetOptions[0]?.symbol ?? null;
+  // Padrão: primeiro par de forex do mercado real (evita abrir em ações/índices).
+  const defaultAsset =
+    assetOptions.find((a) => a.category === "MERCADO REAL" && /^[A-Z]{3}\/?[A-Z]{3}$/.test(a.symbol.toUpperCase())) ??
+    assetOptions.find((a) => /EUR\/?USD/i.test(a.symbol)) ??
+    assetOptions[0];
+  const activeSymbol = selectedSymbol ?? defaultAsset?.symbol ?? null;
+
   useKeepWarm(
     assetOptions.slice(0, 4).map((p) => p.symbol),
     timeframe,
