@@ -230,6 +230,140 @@ export function findMatchesInSeries(
   return kept;
 }
 
+// ---------------------------------------------------------------------------
+// Caminho rápido: usado na varredura global (todos os ativos contra todos).
+// Pré-calcula os retornos e somas acumuladas do histórico uma única vez, para
+// que cada deslocamento custe apenas produtos escalares — sem recortar arrays.
+// ---------------------------------------------------------------------------
+
+export interface MirrorSeriesIndex {
+  /** Retornos entre fechamentos consecutivos (tamanho = velas - 1). */
+  rets: Float64Array;
+  /** Soma acumulada dos retornos. */
+  s1: Float64Array;
+  /** Soma acumulada dos quadrados. */
+  s2: Float64Array;
+}
+
+export function buildSeriesIndex(hist: MirrorCandle[]): MirrorSeriesIndex {
+  const m = Math.max(hist.length - 1, 0);
+  const rets = new Float64Array(m);
+  const s1 = new Float64Array(m + 1);
+  const s2 = new Float64Array(m + 1);
+  for (let i = 0; i < m; i++) {
+    const prev = hist[i]!.close;
+    const curr = hist[i + 1]!.close;
+    const r = prev > 0 ? (curr - prev) / prev : 0;
+    rets[i] = r;
+    s1[i + 1] = s1[i]! + r;
+    s2[i + 1] = s2[i]! + r * r;
+  }
+  return { rets, s1, s2 };
+}
+
+function popStats(sum: number, sumSq: number, n: number): { mean: number; sd: number } {
+  const mean = sum / n;
+  const variance = Math.max(sumSq / n - mean * mean, 0);
+  return { mean, sd: Math.sqrt(variance) };
+}
+
+/** Mesma busca de `findMatchesInSeries`, porém sobre um índice pré-calculado. */
+export function findMatchesFast(
+  asset: string,
+  timeframe: string,
+  live: MirrorCandle[],
+  hist: MirrorCandle[],
+  index: MirrorSeriesIndex,
+  options: MirrorSearchOptions = {},
+): MirrorMatch[] {
+  const minCorrelation = options.minCorrelation ?? 0.93;
+  const tolerance = options.volatilityTolerance ?? 2.4;
+  const maxPerAsset = options.maxPerAsset ?? 3;
+
+  const liveReturns = closeReturns(live);
+  const k = liveReturns.length;
+  const m = index.rets.length;
+  if (k < 6 || m < k + 3) return [];
+
+  const liveStats = popStats(
+    liveReturns.reduce((a, v) => a + v, 0),
+    liveReturns.reduce((a, v) => a + v * v, 0),
+    k,
+  );
+  if (!(liveStats.sd > 0)) return [];
+  const liveLastClose = live[live.length - 1]!.close;
+
+  // Transforma a janela ao vivo (não o histórico): 4 vetores fixos por ativo.
+  const variants = TRANSFORMS.map((transform) => ({
+    transform,
+    vector: Float64Array.from(transformReturns(liveReturns, transform)),
+  }));
+
+  const found: MirrorMatch[] = [];
+  const rets = index.rets;
+
+  for (let start = 1; start + k + 1 < hist.length; start++) {
+    // Índices de retorno da janela: start .. start + k - 1
+    const from = start;
+    const to = start + k;
+    if (to > m) break;
+    if (options.excludeFrom != null && hist[start + k]!.time >= options.excludeFrom) break;
+
+    const winStats = popStats(index.s1[to]! - index.s1[from]!, index.s2[to]! - index.s2[from]!, k);
+    if (!(winStats.sd > 0)) continue;
+    const ratio = winStats.sd / liveStats.sd;
+    if (ratio > tolerance || ratio < 1 / tolerance) continue;
+
+    for (const { transform, vector } of variants) {
+      // r = (E[xy] - mx·my) / (sx·sy) — mesma escala do Pearson clássico.
+      let dot = 0;
+      for (let j = 0; j < k; j++) dot += vector[j]! * rets[from + j]!;
+      const vStats = popStats(
+        vector.reduce((a, v) => a + v, 0),
+        vector.reduce((a, v) => a + v * v, 0),
+        k,
+      );
+      if (!(vStats.sd > 0)) continue;
+      const r = (dot / k - vStats.mean * winStats.mean) / (vStats.sd * winStats.sd);
+      if (!Number.isFinite(r) || r < minCorrelation) continue;
+
+      const projection = projectedReturn(hist, start, k + 1, transform);
+      if (!projection) continue;
+      const window = hist.slice(start, start + k + 1);
+      const scaled = projection.value / (ratio || 1);
+      found.push({
+        asset,
+        timeframe,
+        transform,
+        correlation: r,
+        similarity: Math.round(r * 1000) / 10,
+        startTime: window[0]!.time,
+        endTime: window[window.length - 1]!.time,
+        volatilityRatio: Math.round(ratio * 100) / 100,
+        predictedReturn: scaled,
+        direction: scaled >= 0 ? "CALL" : "PUT",
+        projectedClose: liveLastClose * (1 + scaled),
+        window,
+        nextCandle: projection.candle,
+      });
+    }
+  }
+
+  found.sort((a, b) => b.correlation - a.correlation);
+  const kept: MirrorMatch[] = [];
+  for (const match of found) {
+    const overlapping = kept.some(
+      (mm) =>
+        mm.transform === match.transform &&
+        Math.abs(mm.startTime - match.startTime) < (match.endTime - match.startTime) / 2,
+    );
+    if (overlapping) continue;
+    kept.push(match);
+    if (kept.length >= maxPerAsset) break;
+  }
+  return kept;
+}
+
 export interface MirrorConsensus {
   direction: "CALL" | "PUT" | null;
   /** Porcentagem das melhores coincidências que apontam para a direção. */
