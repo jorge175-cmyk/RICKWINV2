@@ -71,6 +71,14 @@ export interface MirrorSearchOptions {
 
 const TRANSFORMS: MirrorTransform[] = ["DIRECT", "TIME_REVERSED", "PRICE_INVERTED", "BOTH"];
 
+/** Duração da vela deduzida dos horários da janela ao vivo (fallback: 60s). */
+export function inferStepSeconds(candles: MirrorCandle[]): number {
+  if (candles.length < 2) return 60;
+  const diff = candles[candles.length - 1]!.time - candles[candles.length - 2]!.time;
+  return diff > 0 ? diff : 60;
+}
+
+
 /** Retornos percentuais entre fechamentos consecutivos. */
 export function closeReturns(candles: MirrorCandle[]): number[] {
   const out: number[] = [];
