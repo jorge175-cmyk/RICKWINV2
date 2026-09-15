@@ -143,36 +143,68 @@ function nextIndexFor(startIndex: number, windowLength: number, transform: Mirro
   return readsBackwards ? startIndex - 1 : startIndex + windowLength;
 }
 
-/** Retorno projetado para a próxima vela, já convertido para a leitura atual. */
-function projectedReturn(
+/**
+ * Caminho projetado: as próximas `steps` velas da sequência histórica,
+ * já convertidas para a leitura atual (espelho de tempo / inversão de preço).
+ */
+function projectedPath(
   hist: MirrorCandle[],
   startIndex: number,
   windowLength: number,
   transform: MirrorTransform,
-): { value: number; candle: MirrorCandle } | null {
+  steps: number,
+): { value: number; candle: MirrorCandle; path: Array<{ ret: number; source: MirrorCandle }> } | null {
   const readsBackwards = transform === "TIME_REVERSED" || transform === "BOTH";
-  const nextIdx = nextIndexFor(startIndex, windowLength, transform);
-  const candle = hist[nextIdx];
-  if (!candle) return null;
+  const firstIdx = nextIndexFor(startIndex, windowLength, transform);
+  const first = hist[firstIdx];
+  if (!first) return null;
 
-  let anchorClose: number;
-  let targetClose: number;
-  if (readsBackwards) {
-    // Lendo de trás pra frente, a continuação é a vela anterior ao trecho.
-    anchorClose = hist[nextIdx + 1]!.close;
-    targetClose = candle.close;
-  } else {
-    anchorClose = hist[startIndex + windowLength - 1]!.close;
-    targetClose = candle.close;
-  }
+  let anchorClose = readsBackwards
+    ? hist[firstIdx + 1]!.close
+    : hist[startIndex + windowLength - 1]!.close;
   if (!(anchorClose > 0)) return null;
 
-  let raw = (targetClose - anchorClose) / anchorClose;
-  if (transform === "TIME_REVERSED") raw = -raw; // espelho de tempo inverte o sinal
-  if (transform === "PRICE_INVERTED") raw = -raw;
-  if (transform === "BOTH") raw = raw; // dupla inversão se cancela
-  return { value: raw, candle };
+  const path: Array<{ ret: number; source: MirrorCandle }> = [];
+  for (let i = 0; i < steps; i++) {
+    const idx = readsBackwards ? firstIdx - i : firstIdx + i;
+    const candle = hist[idx];
+    if (!candle || !(anchorClose > 0)) break;
+    let raw = (candle.close - anchorClose) / anchorClose;
+    if (transform === "TIME_REVERSED") raw = -raw; // espelho de tempo inverte o sinal
+    if (transform === "PRICE_INVERTED") raw = -raw;
+    // BOTH: dupla inversão se cancela.
+    path.push({ ret: raw, source: candle });
+    anchorClose = candle.close;
+  }
+  if (path.length === 0) return null;
+  return { value: path[0]!.ret, candle: first, path };
 }
+
+/** Monta a sequência projetada aplicada à escala e ao horário do mercado ao vivo. */
+function buildProjection(
+  path: Array<{ ret: number; source: MirrorCandle }>,
+  ratio: number,
+  liveLastClose: number,
+  liveLastTime: number,
+  stepSeconds: number,
+): MirrorProjectedStep[] {
+  const out: MirrorProjectedStep[] = [];
+  let close = liveLastClose;
+  path.forEach((item, i) => {
+    const scaled = item.ret / (ratio || 1);
+    close = close * (1 + scaled);
+    out.push({
+      step: i + 1,
+      time: liveLastTime + (i + 1) * stepSeconds,
+      ret: scaled,
+      direction: scaled >= 0 ? "CALL" : "PUT",
+      close,
+      source: item.source,
+    });
+  });
+  return out;
+}
+
 
 /**
  * Varre um histórico procurando janelas parecidas com a janela ao vivo.
