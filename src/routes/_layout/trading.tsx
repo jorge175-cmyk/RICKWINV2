@@ -17,7 +17,7 @@ import { getIqOptionName } from "@/lib/iqoption/mapping";
 import { getOtcAssets } from "@/lib/iqoption/candles.functions";
 import { candleStore } from "@/lib/iqoption/candleStore";
 
-import { Clock, TrendingUp, Zap, Star, LogOut, User } from "lucide-react";
+import { Clock, TrendingUp, Zap, Star, LogOut, User, Copy } from "lucide-react";
 
 /** Pares principais sempre disponíveis, para o painel abrir sem esperar a corretora. */
 const FALLBACK_PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CHF", "USD/CAD"];
