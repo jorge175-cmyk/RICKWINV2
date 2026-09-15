@@ -28,6 +28,18 @@ const inputSchema = z.object({
         direction: z.enum(["CALL", "PUT"]),
         window: z.array(candleSchema).max(80),
         nextCandle: candleSchema.nullable(),
+        projection: z
+          .array(
+            z.object({
+              step: z.number(),
+              time: z.number(),
+              ret: z.number(),
+              direction: z.enum(["CALL", "PUT"]),
+              close: z.number(),
+            }),
+          )
+          .max(12)
+          .default([]),
       }),
     )
     .max(8),
@@ -91,6 +103,13 @@ export const mirrorVerdict = createServerFn({ method: "POST" })
         direcao_projetada: m.direction,
         velas: m.window,
         vela_de_continuacao: m.nextCandle,
+        proximas_velas_previstas: m.projection.map((s) => ({
+          passo: s.step,
+          horario: s.time,
+          variacao_pct: Number((s.ret * 100).toFixed(4)),
+          direcao: s.direction,
+          fechamento_projetado: s.close,
+        })),
       })),
       consenso: data.consensus,
       total_candidatos: data.matches.length,

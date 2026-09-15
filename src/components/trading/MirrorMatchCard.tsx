@@ -20,11 +20,14 @@ function formatRange(start: number, end: number) {
   return `${fmt.format(new Date(start * 1000))} → ${fmt.format(new Date(end * 1000))}`;
 }
 
+const clockFmt = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" });
+
 export function MirrorMatchCard({ match, liveWindow }: MirrorMatchCardProps) {
   const isCall = match.direction === "CALL";
   const movePct = (match.predictedReturn * 100).toFixed(3);
   const reverseTime = match.transform === "TIME_REVERSED" || match.transform === "BOTH";
   const invertPrice = match.transform === "PRICE_INVERTED" || match.transform === "BOTH";
+  const projection = match.projection ?? [];
 
   return (
     <Card className="border-border/50 bg-surface/40">
@@ -51,16 +54,47 @@ export function MirrorMatchCard({ match, liveWindow }: MirrorMatchCardProps) {
           </div>
           <div className="space-y-1 rounded-lg border border-border/40 bg-background/40 p-2">
             <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-              Trecho histórico + próxima vela
+              Trecho histórico + {projection.length || 1} próximas velas
             </p>
             <MiniCandles
               candles={match.window}
               reverseTime={reverseTime}
               invertPrice={invertPrice}
-              nextCandle={match.nextCandle}
+              nextCandles={projection.map((step) => step.source)}
             />
           </div>
         </div>
+
+        {projection.length > 0 && (
+          <div className="space-y-2 rounded-lg border border-border/40 bg-background/40 p-3">
+            <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              Sequência prevista no mercado ao vivo
+            </p>
+            <div className="grid gap-2 sm:grid-cols-5">
+              {projection.map((step) => {
+                const up = step.direction === "CALL";
+                return (
+                  <div
+                    key={step.step}
+                    className="space-y-0.5 rounded-md border border-border/40 bg-surface/40 p-2 text-center"
+                  >
+                    <p className="text-[10px] text-muted-foreground">
+                      {clockFmt.format(new Date(step.time * 1000))}
+                    </p>
+                    <p
+                      className={`flex items-center justify-center gap-1 font-display text-xs font-bold ${up ? "text-call" : "text-put"}`}
+                    >
+                      {up ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+                      {up ? "COMPRA" : "VENDA"}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">{(step.ret * 100).toFixed(3)}%</p>
+                    <p className="text-[10px] text-muted-foreground">{step.close.toFixed(5)}</p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/40 pt-3">
           <div className={`flex items-center gap-2 ${isCall ? "text-call" : "text-put"}`}>
@@ -78,3 +112,4 @@ export function MirrorMatchCard({ match, liveWindow }: MirrorMatchCardProps) {
     </Card>
   );
 }
+
