@@ -114,10 +114,18 @@ function TradingSignalsPage() {
 
   const activeSymbol = selectedSymbol ?? defaultAsset?.symbol ?? null;
 
+  // Um único canal transporta todos os ativos disponíveis em tempo real.
+  const streamKey = assetOptions.map((a) => a.symbol).join(",");
+  useEffect(() => {
+    if (!streamKey) return;
+    void candleStore.streamAllAssets(streamKey.split(","));
+  }, [streamKey]);
+
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     toast.success("Signed out successfully");
   };
+
 
 
   return (
