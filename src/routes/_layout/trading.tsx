@@ -15,7 +15,6 @@ import cardTexture from "@/assets/card-texture.jpg";
 import cardFlow from "@/assets/card-flow.jpg";
 import { getIqOptionName } from "@/lib/iqoption/mapping";
 import { getOtcAssets } from "@/lib/iqoption/candles.functions";
-import { useKeepWarm } from "@/lib/iqoption/useIqOptionStream";
 import { Clock, TrendingUp, Zap, Star, LogOut, User } from "lucide-react";
 
 /** Pares principais sempre disponíveis, para o painel abrir sem esperar a corretora. */
@@ -114,12 +113,6 @@ function TradingSignalsPage() {
     assetOptions[0];
 
   const activeSymbol = selectedSymbol ?? defaultAsset?.symbol ?? null;
-
-  useKeepWarm(
-    assetOptions.slice(0, 4).map((p) => p.symbol),
-    timeframe,
-
-  );
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();

@@ -403,11 +403,13 @@ async function withSession<T>(
   try {
     return await fn(session.send, session.waitFor);
   } catch (error) {
-    // Do not log in again here. Drop only the failed socket; getSsid remains
-    // cached, so the next request reconnects without hitting the login API.
-    discardSharedSession();
-    // A dead socket recovers instantly on a fresh one with the same session.
-    if (attempt === 0 && !(error instanceof IqOptionBackoffError)) {
+    // A single slow candle response must not tear down the shared connection
+    // used by every other request. Recreate it only when the transport died.
+    const socketDied = session.socket.readyState !== 1;
+    if (socketDied) discardSharedSession();
+    // A dead socket recovers on a fresh transport with the cached SSID. A
+    // request timeout is returned to its caller without disrupting others.
+    if (socketDied && attempt === 0 && !(error instanceof IqOptionBackoffError)) {
       return withSession(fn, attempt + 1);
     }
     throw error;

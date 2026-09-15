@@ -361,12 +361,17 @@ class CandleStore {
 
     const resync = () => {
       if (document.visibilityState === "hidden") return;
-      iqOptionClient.hardReconnect(true);
-      for (const entry of this.entries.values()) void this.loadHistory(entry, true);
+      // Returning to the tab used to close a healthy socket and trigger a
+      // burst of history requests. Only recover when the channel is down;
+      // the client's existing backoff then coalesces duplicate focus events.
+      if (iqOptionClient.getStatus() === "live") return;
+      iqOptionClient.hardReconnect();
+      for (const entry of this.entries.values()) {
+        if (entry.listeners.size > 0) void this.loadHistory(entry, true);
+      }
     };
 
     window.addEventListener("visibilitychange", resync);
-    window.addEventListener("focus", resync);
     window.addEventListener("online", resync);
 
     this.freshnessTimer = setInterval(() => {
