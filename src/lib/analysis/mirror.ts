@@ -45,7 +45,7 @@ export interface MirrorSearchOptions {
   /** Máximo de coincidências devolvidas por ativo. */
   maxPerAsset?: number;
   /** Não comparar com trechos que se sobrepõem à própria janela ao vivo. */
-  excludeFrom?: number;
+  excludeFrom?: number | undefined;
 }
 
 const TRANSFORMS: MirrorTransform[] = ["DIRECT", "TIME_REVERSED", "PRICE_INVERTED", "BOTH"];
