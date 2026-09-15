@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as LayoutRouteImport } from './routes/_layout'
 import { Route as AuthRouteImport } from './routes/auth'
+import { Route as LayoutMirrorRouteImport } from './routes/_layout/mirror'
 import { Route as LayoutTradingRouteImport } from './routes/_layout/trading'
 import { Route as ApiPublicIqoptionWsRouteImport } from './routes/api/public/iqoption-ws'
 
@@ -29,6 +30,11 @@ const AuthRoute = AuthRouteImport.update({
   path: '/auth',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LayoutMirrorRoute = LayoutMirrorRouteImport.update({
+  id: '/mirror',
+  path: '/mirror',
+  getParentRoute: () => LayoutRoute,
+} as any)
 const LayoutTradingRoute = LayoutTradingRouteImport.update({
   id: '/trading',
   path: '/trading',
@@ -43,12 +49,14 @@ const ApiPublicIqoptionWsRoute = ApiPublicIqoptionWsRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/mirror': typeof LayoutMirrorRoute
   '/trading': typeof LayoutTradingRoute
   '/api/public/iqoption-ws': typeof ApiPublicIqoptionWsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/mirror': typeof LayoutMirrorRoute
   '/trading': typeof LayoutTradingRoute
   '/api/public/iqoption-ws': typeof ApiPublicIqoptionWsRoute
 }
@@ -57,19 +65,21 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/_layout': typeof LayoutRouteWithChildren
   '/auth': typeof AuthRoute
+  '/_layout/mirror': typeof LayoutMirrorRoute
   '/_layout/trading': typeof LayoutTradingRoute
   '/api/public/iqoption-ws': typeof ApiPublicIqoptionWsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/auth' | '/trading' | '/api/public/iqoption-ws'
+  fullPaths: '/' | '/auth' | '/mirror' | '/trading' | '/api/public/iqoption-ws'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/auth' | '/trading' | '/api/public/iqoption-ws'
+  to: '/' | '/auth' | '/mirror' | '/trading' | '/api/public/iqoption-ws'
   id:
     | '__root__'
     | '/'
     | '/_layout'
     | '/auth'
+    | '/_layout/mirror'
     | '/_layout/trading'
     | '/api/public/iqoption-ws'
   fileRoutesById: FileRoutesById
@@ -104,6 +114,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_layout/mirror': {
+      id: '/_layout/mirror'
+      path: '/mirror'
+      fullPath: '/mirror'
+      preLoaderRoute: typeof LayoutMirrorRouteImport
+      parentRoute: typeof LayoutRoute
+    }
     '/_layout/trading': {
       id: '/_layout/trading'
       path: '/trading'
@@ -122,10 +139,12 @@ declare module '@tanstack/react-router' {
 }
 
 interface LayoutRouteChildren {
+  LayoutMirrorRoute: typeof LayoutMirrorRoute
   LayoutTradingRoute: typeof LayoutTradingRoute
 }
 
 const LayoutRouteChildren: LayoutRouteChildren = {
+  LayoutMirrorRoute: LayoutMirrorRoute,
   LayoutTradingRoute: LayoutTradingRoute,
 }
 

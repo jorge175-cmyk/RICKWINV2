@@ -482,8 +482,12 @@ export async function fetchCandles(
   iqName: string,
   sizeSeconds: number,
   count: number,
+  /** End of the requested range (epoch seconds). Defaults to "now". */
+  toEpochSeconds?: number,
 ): Promise<UpstreamCandle[]> {
-  const cacheKey = `${iqName.toUpperCase()}:${sizeSeconds}:${count}`;
+  const isHistorical = typeof toEpochSeconds === "number" && Number.isFinite(toEpochSeconds);
+  const to = isHistorical ? Math.floor(toEpochSeconds!) : Math.floor(Date.now() / 1000);
+  const cacheKey = `${iqName.toUpperCase()}:${sizeSeconds}:${count}:${isHistorical ? to : "now"}`;
   const cached = candleCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.candles;
   const pending = candleRequests.get(cacheKey);
@@ -503,7 +507,7 @@ export async function fetchCandles(
         body: {
           active_id: activeId,
           size: sizeSeconds,
-          to: Math.floor(Date.now() / 1000),
+          to,
           count,
         },
       },
@@ -526,7 +530,8 @@ export async function fetchCandles(
       .sort((a, b) => a.time - b.time);
     candleCache.set(cacheKey, {
       candles,
-      expiresAt: Date.now() + (sizeSeconds <= 1 ? 1_500 : 4_000),
+      // Blocos históricos são imutáveis: cache longo evita reconsultas na varredura.
+      expiresAt: Date.now() + (isHistorical ? 30 * 60_000 : sizeSeconds <= 1 ? 1_500 : 4_000),
     });
     return candles;
   }).finally(() => {
