@@ -28,6 +28,18 @@ const inputSchema = z.object({
         direction: z.enum(["CALL", "PUT"]),
         window: z.array(candleSchema).max(80),
         nextCandle: candleSchema.nullable(),
+        projection: z
+          .array(
+            z.object({
+              step: z.number(),
+              time: z.number(),
+              ret: z.number(),
+              direction: z.enum(["CALL", "PUT"]),
+              close: z.number(),
+            }),
+          )
+          .max(12)
+          .default([]),
       }),
     )
     .max(8),
