@@ -507,7 +507,7 @@ export async function fetchCandles(
         body: {
           active_id: activeId,
           size: sizeSeconds,
-          to: Math.floor(Date.now() / 1000),
+          to,
           count,
         },
       },
