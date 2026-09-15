@@ -107,11 +107,10 @@ export const findMirrorMatches = createServerFn({ method: "POST" })
 
       for (const [iqName, label] of candidates) {
         try {
-          const hist =
-            iqName === liveName ? closed : await loadHistory(fetchCandles, iqName, size, data.historyBlocks);
-          if (iqName === liveName && data.historyBlocks > 1) {
-            const deep = await loadHistory(fetchCandles, iqName, size, data.historyBlocks);
-            if (deep.length > hist.length) hist.splice(0, hist.length, ...deep.filter((c) => c.time < liveStart));
+          const hist = await loadHistory(fetchCandles, iqName, size, data.historyBlocks);
+          if (hist.length === 0) {
+            skipped.push(label);
+            continue;
           }
           scannedAssets++;
           scannedCandles += hist.length;
