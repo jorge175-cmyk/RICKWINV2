@@ -31,12 +31,16 @@ type QuoteHandler = (quote: LiveQuote) => void;
 type StatusHandler = (status: StreamStatus, error?: string) => void;
 
 const PROXY_PATH = "/api/public/iqoption-ws";
-const ZOMBIE_TIMEOUT_MS = 20_000;
+const ZOMBIE_TIMEOUT_MS = 45_000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const WATCHDOG_INTERVAL_MS = 5_000;
+// Batched fan-out for the full asset catalogue over the single channel.
+const QUOTE_BATCH_SIZE = 25;
+const QUOTE_BATCH_DELAY_MS = 400;
 // The upstream session is reused, so reconnecting is cheap: retry fast and
 // cap the delay low so a dropped channel resumes within seconds.
-const MAX_RECONNECT_DELAY_MS = 60_000;
+const MAX_RECONNECT_DELAY_MS = 30_000;
+
 
 class IqOptionClient {
   private socket: WebSocket | null = null;
@@ -106,16 +110,13 @@ class IqOptionClient {
     this.sendCandleSubscribe(normalizedAsset, sizeSeconds);
   }
 
+  /**
+   * Subscriptions are kept for the whole session: dropping and re-adding them
+   * whenever a component unmounts caused constant channel churn upstream.
+   */
   unsubscribe(asset: string, sizeSeconds: number) {
-    const normalizedAsset = asset.toUpperCase();
-    const key = `${normalizedAsset}:${sizeSeconds}`;
-    const entry = this.subscriptions.get(key);
-    if (!entry) return;
-    entry.count -= 1;
-    if (entry.count > 0) return;
-    this.subscriptions.delete(key);
-    this.sendCandleUnsubscribe(normalizedAsset, sizeSeconds);
-    this.disconnectIfUnused();
+    const entry = this.subscriptions.get(`${asset.toUpperCase()}:${sizeSeconds}`);
+    if (entry && entry.count > 0) entry.count -= 1;
   }
 
   async subscribeQuotes(asset: string) {
@@ -131,14 +132,32 @@ class IqOptionClient {
   }
 
   unsubscribeQuotes(asset: string) {
-    const normalizedAsset = asset.toUpperCase();
-    const entry = this.quoteSubscriptions.get(normalizedAsset);
-    if (!entry) return;
-    entry.count -= 1;
-    if (entry.count > 0) return;
-    this.quoteSubscriptions.delete(normalizedAsset);
-    this.sendQuoteUnsubscribe(normalizedAsset);
-    this.disconnectIfUnused();
+    const entry = this.quoteSubscriptions.get(asset.toUpperCase());
+    if (entry && entry.count > 0) entry.count -= 1;
+  }
+
+  /**
+   * Streams every tradable asset through the single existing channel. Frames go
+   * out in small batches so the provider never sees a burst.
+   */
+  async subscribeAllAssets(assets: string[]) {
+    await this.ensureConnected();
+    if (!this.activeIds) return;
+    const pending = assets
+      .map((asset) => asset.toUpperCase())
+      .filter((asset) => this.activeIdFor(asset) && !this.quoteSubscriptions.has(asset));
+    if (pending.length === 0) return;
+
+    for (const asset of pending) {
+      this.quoteSubscriptions.set(asset, { asset, count: 0 });
+    }
+    for (let index = 0; index < pending.length; index += QUOTE_BATCH_SIZE) {
+      const batch = pending.slice(index, index + QUOTE_BATCH_SIZE);
+      for (const asset of batch) this.sendQuoteSubscribe(asset);
+      if (index + QUOTE_BATCH_SIZE < pending.length) {
+        await new Promise<void>((resolve) => setTimeout(resolve, QUOTE_BATCH_DELAY_MS));
+      }
+    }
   }
 
   private activeIdFor(asset: string) {
@@ -149,9 +168,6 @@ class IqOptionClient {
     return this.subscriptions.size > 0 || this.quoteSubscriptions.size > 0;
   }
 
-  private disconnectIfUnused() {
-    if (!this.hasSubscriptions()) this.disconnect();
-  }
 
   private sendFrame(frame: unknown) {
     if (this.socket?.readyState === WebSocket.OPEN) {
