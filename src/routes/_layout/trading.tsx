@@ -141,6 +141,12 @@ function TradingSignalsPage() {
             <span className="font-display text-lg font-bold tracking-tight">BinaryPulse</span>
           </div>
           <div className="flex items-center gap-3">
+            <Button asChild variant="outline" size="sm" className="gap-2">
+              <Link to="/mirror">
+                <Copy className="h-4 w-4" />
+                <span className="hidden sm:inline">Espelho OTC</span>
+              </Link>
+            </Button>
             <div className="hidden items-center gap-2 rounded-full border border-border/60 bg-surface px-3 py-1.5 sm:flex">
               <User className="h-3.5 w-3.5 text-muted-foreground" />
               <span className="text-xs font-medium text-foreground">
