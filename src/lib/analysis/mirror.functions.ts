@@ -217,10 +217,13 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
               minCorrelation: data.minCorrelation,
               maxPerAsset: 3,
               excludeFrom: histName === iqName ? liveStart : undefined,
-            }),
+              projectionSteps: PROJECTION_STEPS,
+              stepSeconds: size,
+            }).filter((m) => m.projection.length >= PROJECTION_STEPS),
           );
         }
         if (found.length === 0) continue;
+
         found.sort((a, b) => b.correlation - a.correlation);
         const matches = found.slice(0, MAX_MATCHES);
         groups.push({
