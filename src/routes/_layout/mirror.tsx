@@ -160,6 +160,13 @@ function MirrorPage() {
             direction: m.direction,
             window: m.window,
             nextCandle: m.nextCandle,
+            projection: m.projection.map((s) => ({
+              step: s.step,
+              time: s.time,
+              ret: s.ret,
+              direction: s.direction,
+              close: s.close,
+            })),
           })),
           consensus: group.consensus,
         },
