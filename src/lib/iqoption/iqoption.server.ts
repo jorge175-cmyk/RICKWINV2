@@ -482,8 +482,12 @@ export async function fetchCandles(
   iqName: string,
   sizeSeconds: number,
   count: number,
+  /** End of the requested range (epoch seconds). Defaults to "now". */
+  toEpochSeconds?: number,
 ): Promise<UpstreamCandle[]> {
-  const cacheKey = `${iqName.toUpperCase()}:${sizeSeconds}:${count}`;
+  const isHistorical = typeof toEpochSeconds === "number" && Number.isFinite(toEpochSeconds);
+  const to = isHistorical ? Math.floor(toEpochSeconds!) : Math.floor(Date.now() / 1000);
+  const cacheKey = `${iqName.toUpperCase()}:${sizeSeconds}:${count}:${isHistorical ? to : "now"}`;
   const cached = candleCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.candles;
   const pending = candleRequests.get(cacheKey);
