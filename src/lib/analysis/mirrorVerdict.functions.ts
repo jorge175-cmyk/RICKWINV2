@@ -103,6 +103,13 @@ export const mirrorVerdict = createServerFn({ method: "POST" })
         direcao_projetada: m.direction,
         velas: m.window,
         vela_de_continuacao: m.nextCandle,
+        proximas_velas_previstas: m.projection.map((s) => ({
+          passo: s.step,
+          horario: s.time,
+          variacao_pct: Number((s.ret * 100).toFixed(4)),
+          direcao: s.direction,
+          fechamento_projetado: s.close,
+        })),
       })),
       consenso: data.consensus,
       total_candidatos: data.matches.length,
