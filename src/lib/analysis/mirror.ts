@@ -220,6 +220,8 @@ export function findMatchesInSeries(
   const minCorrelation = options.minCorrelation ?? 0.93;
   const tolerance = options.volatilityTolerance ?? 2.4;
   const maxPerAsset = options.maxPerAsset ?? 3;
+  const steps = Math.max(1, options.projectionSteps ?? 5);
+  const stepSeconds = options.stepSeconds ?? inferStepSeconds(live);
 
   const liveReturns = closeReturns(live);
   const k = liveReturns.length;
@@ -227,6 +229,8 @@ export function findMatchesInSeries(
   const liveVol = stdev(liveReturns);
   if (!(liveVol > 0)) return [];
   const liveLastClose = live[live.length - 1]!.close;
+  const liveLastTime = live[live.length - 1]!.time;
+
 
   const found: MirrorMatch[] = [];
 
