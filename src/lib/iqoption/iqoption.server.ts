@@ -530,7 +530,8 @@ export async function fetchCandles(
       .sort((a, b) => a.time - b.time);
     candleCache.set(cacheKey, {
       candles,
-      expiresAt: Date.now() + (sizeSeconds <= 1 ? 1_500 : 4_000),
+      // Blocos históricos são imutáveis: cache longo evita reconsultas na varredura.
+      expiresAt: Date.now() + (isHistorical ? 30 * 60_000 : sizeSeconds <= 1 ? 1_500 : 4_000),
     });
     return candles;
   }).finally(() => {
