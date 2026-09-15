@@ -250,7 +250,7 @@ export function findMatchesInSeries(
       const candidate = transformReturns(winReturns, transform);
       const r = pearson(liveReturns, candidate);
       if (r < minCorrelation) continue;
-      const projection = projectedReturn(hist, start, k + 1, transform);
+      const projection = projectedPath(hist, start, k + 1, transform, steps);
       if (!projection) continue;
 
       // Reescala o movimento projetado para a volatilidade atual do ativo ao vivo.
@@ -269,7 +269,9 @@ export function findMatchesInSeries(
         projectedClose: liveLastClose * (1 + scaled),
         window,
         nextCandle: projection.candle,
+        projection: buildProjection(projection.path, ratio, liveLastClose, liveLastTime, stepSeconds),
       });
+
     }
   }
 
