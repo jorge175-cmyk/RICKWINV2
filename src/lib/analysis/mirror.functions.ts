@@ -14,6 +14,8 @@ import {
 
 const BLOCK_SIZE = 500;
 const MAX_MATCHES = 8;
+/** Quantas velas à frente cada coincidência precisa projetar. */
+const PROJECTION_STEPS = 5;
 /** Tempo que o histórico baixado continua reaproveitável na varredura. */
 const STORE_TTL_MS = 25 * 60 * 1000;
 
