@@ -338,6 +338,8 @@ export function findMatchesFast(
   const minCorrelation = options.minCorrelation ?? 0.93;
   const tolerance = options.volatilityTolerance ?? 2.4;
   const maxPerAsset = options.maxPerAsset ?? 3;
+  const steps = Math.max(1, options.projectionSteps ?? 5);
+  const stepSeconds = options.stepSeconds ?? inferStepSeconds(live);
 
   const liveReturns = closeReturns(live);
   const k = liveReturns.length;
@@ -351,6 +353,8 @@ export function findMatchesFast(
   );
   if (!(liveStats.sd > 0)) return [];
   const liveLastClose = live[live.length - 1]!.close;
+  const liveLastTime = live[live.length - 1]!.time;
+
 
   // Transforma a janela ao vivo (não o histórico): 4 vetores fixos por ativo.
   const variants = TRANSFORMS.map((transform) => ({
