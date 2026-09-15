@@ -21,6 +21,8 @@ const MAX_CANDLES = 300;
 const HISTORY_COUNT = 200;
 const MAX_INTERPOLATED_GAP = 5;
 const MAX_TICKS = 5_000;
+const IDLE_MAX_TICKS = 300;
+
 const FRESHNESS_INTERVAL_MS = 30_000;
 const POLL_INTERVAL_MS = 10_000;
 const QUOTE_FALLBACK_INTERVAL_MS = 5_000;
@@ -252,30 +254,48 @@ class CandleStore {
 
   private streamAttached = false;
 
+  /** Opens the single channel for every tradable asset (batched upstream). */
+  async streamAllAssets(assets: string[]) {
+    this.startTimers();
+    this.attachStream();
+    await iqOptionClient.subscribeAllAssets(assets);
+  }
+
   private applyQuote(quote: LiveQuote) {
     const asset = quote.asset.toUpperCase();
+    const tracked = [...this.entries.values()].filter((entry) => entry.asset === asset);
     const buffer = this.ensureQuoteBuffer(asset);
     const now = Date.now();
     const timeMs = Number.isFinite(quote.timeMs) ? quote.timeMs : now;
     buffer.ticks.push({ t: timeMs, price: quote.value });
-    if (buffer.ticks.length > MAX_TICKS) buffer.ticks.splice(0, buffer.ticks.length - MAX_TICKS);
     buffer.bid = quote.bid;
     buffer.ask = quote.ask;
     buffer.lastAt = now;
+
+    // Assets nobody is analysing keep only a light buffer and skip the heavy
+    // tick analysis, so streaming the whole catalogue stays cheap.
+    if (tracked.length === 0) {
+      if (buffer.ticks.length > IDLE_MAX_TICKS) {
+        buffer.ticks.splice(0, buffer.ticks.length - IDLE_MAX_TICKS);
+      }
+      return;
+    }
+
+    if (buffer.ticks.length > MAX_TICKS) buffer.ticks.splice(0, buffer.ticks.length - MAX_TICKS);
     buffer.analysis = analyseTicks(buffer.ticks, {
       now,
       bid: buffer.bid,
       ask: buffer.ask,
     });
 
-    for (const entry of this.entries.values()) {
-      if (entry.asset !== asset) continue;
+    for (const entry of tracked) {
       entry.lastTickAt = now;
       entry.currentPrice = quote.value;
       this.recordDominance(entry, buffer.analysis, timeMs);
     }
     this.scheduleQuoteEmit(asset);
   }
+
 
   private recordDominance(entry: Entry, analysis: TickAnalysis | null, timeMs: number) {
     if (!analysis) return;

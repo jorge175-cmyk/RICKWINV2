@@ -10,7 +10,10 @@ const IQ_LOGIN_URL = "https://auth.iqoption.com/api/v2/login";
 const SSID_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 // Keep the authenticated upstream socket for as long as the worker lives; a
 // heartbeat keeps it warm so no re-login is ever needed for normal usage.
-const SESSION_IDLE_MS = 30 * 60 * 1000;
+// Quiet periods must never drop it: rebuilding the socket is what used to make
+// the provider treat the account as a brand new session.
+const SESSION_IDLE_MS = 24 * 60 * 60 * 1000;
+
 const HEARTBEAT_INTERVAL_MS = 20_000;
 const MAX_BACKOFF_MS = 60 * 60 * 1000;
 const LOGIN_LEASE_SECONDS = 25;
