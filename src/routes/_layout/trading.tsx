@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { getCurrencyPairs, getUserProfile, getWinRate } from "@/lib/trading.functions";
 import { useAuth } from "@/lib/auth";
@@ -15,6 +15,8 @@ import cardTexture from "@/assets/card-texture.jpg";
 import cardFlow from "@/assets/card-flow.jpg";
 import { getIqOptionName } from "@/lib/iqoption/mapping";
 import { getOtcAssets } from "@/lib/iqoption/candles.functions";
+import { candleStore } from "@/lib/iqoption/candleStore";
+
 import { Clock, TrendingUp, Zap, Star, LogOut, User } from "lucide-react";
 
 /** Pares principais sempre disponíveis, para o painel abrir sem esperar a corretora. */
