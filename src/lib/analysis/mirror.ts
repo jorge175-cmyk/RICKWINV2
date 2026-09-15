@@ -390,7 +390,7 @@ export function findMatchesFast(
       const r = (dot / k - vStats.mean * winStats.mean) / (vStats.sd * winStats.sd);
       if (!Number.isFinite(r) || r < minCorrelation) continue;
 
-      const projection = projectedReturn(hist, start, k + 1, transform);
+      const projection = projectedPath(hist, start, k + 1, transform, steps);
       if (!projection) continue;
       const window = hist.slice(start, start + k + 1);
       const scaled = projection.value / (ratio || 1);
@@ -408,7 +408,9 @@ export function findMatchesFast(
         projectedClose: liveLastClose * (1 + scaled),
         window,
         nextCandle: projection.candle,
+        projection: buildProjection(projection.path, ratio, liveLastClose, liveLastTime, stepSeconds),
       });
+
     }
   }
 
