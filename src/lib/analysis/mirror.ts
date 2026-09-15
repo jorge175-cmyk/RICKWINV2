@@ -13,6 +13,20 @@ export interface MirrorCandle {
 
 export type MirrorTransform = "DIRECT" | "TIME_REVERSED" | "PRICE_INVERTED" | "BOTH";
 
+export interface MirrorProjectedStep {
+  /** 1 = próxima vela, 2 = a seguinte, e assim por diante. */
+  step: number;
+  /** Horário previsto da vela no mercado ao vivo (epoch segundos). */
+  time: number;
+  /** Retorno projetado da vela, em fração (0.0012 = +0,12%). */
+  ret: number;
+  direction: "CALL" | "PUT";
+  /** Fechamento projetado acumulado sobre o último fechamento ao vivo. */
+  close: number;
+  /** Vela histórica que originou a projeção. */
+  source: MirrorCandle;
+}
+
 export interface MirrorMatch {
   asset: string;
   timeframe: string;
@@ -35,6 +49,8 @@ export interface MirrorMatch {
   window: MirrorCandle[];
   /** A vela que veio depois (ou antes, no espelho de tempo) do trecho. */
   nextCandle: MirrorCandle | null;
+  /** Sequência das próximas velas projetadas (mínimo 5 quando há histórico). */
+  projection: MirrorProjectedStep[];
 }
 
 export interface MirrorSearchOptions {
@@ -46,7 +62,12 @@ export interface MirrorSearchOptions {
   maxPerAsset?: number;
   /** Não comparar com trechos que se sobrepõem à própria janela ao vivo. */
   excludeFrom?: number | undefined;
+  /** Quantas velas à frente projetar (padrão 5). */
+  projectionSteps?: number;
+  /** Duração da vela em segundos, para datar as velas projetadas. */
+  stepSeconds?: number;
 }
+
 
 const TRANSFORMS: MirrorTransform[] = ["DIRECT", "TIME_REVERSED", "PRICE_INVERTED", "BOTH"];
 
