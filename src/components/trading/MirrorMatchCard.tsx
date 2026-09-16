@@ -46,14 +46,21 @@ export function MirrorMatchCard({ match, liveWindow }: MirrorMatchCardProps) {
             <p className="font-display text-sm font-semibold text-foreground">{match.asset}</p>
             <p className="text-xs text-muted-foreground">{formatRange(match.startTime, match.endTime)}</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {isPerfect && (
+              <Badge className="bg-primary text-[10px] text-primary-foreground">100% idêntico</Badge>
+            )}
             <Badge variant="secondary" className="text-[10px]">
               {TRANSFORM_LABELS[match.transform]}
             </Badge>
-            <Badge variant="outline" className="text-[10px]">
+            <Badge
+              variant="outline"
+              className={isPerfect ? "border-primary text-[10px] text-primary" : "text-[10px]"}
+            >
               {match.similarity.toFixed(1)}% semelhante
             </Badge>
           </div>
+
         </div>
 
         <div className="grid gap-3 md:grid-cols-2">
