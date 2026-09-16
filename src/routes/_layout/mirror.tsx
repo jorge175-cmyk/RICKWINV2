@@ -47,6 +47,10 @@ const VERDICT_LABEL: Record<MirrorVerdict["verdict"], string> = {
 
 type Phase = "idle" | "collect" | "match" | "done";
 
+/** Horário local do usuário: é nele que a operação será aberta. */
+const CLOCK_FMT = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" });
+
+
 function MirrorPage() {
   const [timeframe, setTimeframe] = useState("M1");
   const [windowSize, setWindowSize] = useState(24);
