@@ -52,7 +52,35 @@ const CATALOGUE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const FRESH_ON_FOCUS_MS = 20_000;
 const FRESH_BACKGROUND_MS = 60_000;
 
+// Embedded fallback catalogue: if the provider's initialization data is slow or
+// incomplete, the channel still becomes usable instead of looping on errors.
+const FALLBACK_ACTIVES: Record<string, number> = {
+  EURUSD: 1,
+  EURGBP: 2,
+  EURJPY: 4,
+  GBPUSD: 5,
+  USDJPY: 6,
+  NZDUSD: 8,
+  AUDUSD: 99,
+  USDCAD: 100,
+  EURCAD: 105,
+  "EURUSD-OTC": 76,
+  "EURGBP-OTC": 77,
+  "EURJPY-OTC": 79,
+  "GBPUSD-OTC": 81,
+  "USDJPY-OTC": 85,
+  "AUDCAD-OTC": 86,
+  "AUDUSD-OTC": 2111,
+  "AUDJPY-OTC": 2113,
+  "EURCAD-OTC": 2117,
+  "CADCHF-OTC": 2119,
+  "BTCUSD-OP": 1916,
+  "ETHUSD-OP": 1918,
+  "ETHUSD-OTC": 1941,
+};
+
 function readCachedActiveIds(): Record<string, number> | null {
+
   if (typeof window === "undefined") return null;
   try {
     const raw = window.localStorage.getItem(CATALOGUE_CACHE_KEY);
