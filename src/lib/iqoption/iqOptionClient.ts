@@ -194,8 +194,11 @@ class IqOptionClient {
       return;
     }
     this.subscriptions.set(key, { asset: normalizedAsset, sizeSeconds, count: 1 });
+    const wasOpen = this.socket?.readyState === WebSocket.OPEN;
     await this.ensureConnected();
-    this.sendCandleSubscribe(normalizedAsset, sizeSeconds);
+    // A fresh connection replays the complete registry on `proxy-ready`.
+    // Send directly only when this subscription joined an already-live socket.
+    if (wasOpen) this.sendCandleSubscribe(normalizedAsset, sizeSeconds);
   }
 
   /**
@@ -203,8 +206,13 @@ class IqOptionClient {
    * whenever a component unmounts caused constant channel churn upstream.
    */
   unsubscribe(asset: string, sizeSeconds: number) {
-    const entry = this.subscriptions.get(`${asset.toUpperCase()}:${sizeSeconds}`);
-    if (entry && entry.count > 0) entry.count -= 1;
+    const key = `${asset.toUpperCase()}:${sizeSeconds}`;
+    const entry = this.subscriptions.get(key);
+    if (!entry) return;
+    entry.count -= 1;
+    if (entry.count > 0) return;
+    this.subscriptions.delete(key);
+    this.sendCandleUnsubscribe(entry.asset, entry.sizeSeconds);
   }
 
   async subscribeQuotes(asset: string) {
@@ -215,13 +223,19 @@ class IqOptionClient {
       return;
     }
     this.quoteSubscriptions.set(normalizedAsset, { asset: normalizedAsset, count: 1 });
+    const wasOpen = this.socket?.readyState === WebSocket.OPEN;
     await this.ensureConnected();
-    this.sendQuoteSubscribe(normalizedAsset);
+    if (wasOpen) this.sendQuoteSubscribe(normalizedAsset);
   }
 
   unsubscribeQuotes(asset: string) {
-    const entry = this.quoteSubscriptions.get(asset.toUpperCase());
-    if (entry && entry.count > 0) entry.count -= 1;
+    const key = asset.toUpperCase();
+    const entry = this.quoteSubscriptions.get(key);
+    if (!entry) return;
+    entry.count -= 1;
+    if (entry.count > 0) return;
+    this.quoteSubscriptions.delete(key);
+    this.sendQuoteUnsubscribe(entry.asset);
   }
 
   /**
@@ -390,8 +404,7 @@ class IqOptionClient {
       const { data } = await supabase.auth.getSession();
       const token = data.session?.access_token;
       if (!token) {
-        this.setStatus("error", "Sign in required for live market data");
-        return;
+        throw new Error("Sign in required for live market data");
       }
 
       const url = `${window.location.origin.replace(/^http/, "ws")}${PROXY_PATH}?token=${encodeURIComponent(token)}`;
@@ -401,7 +414,7 @@ class IqOptionClient {
         const timer = setTimeout(() => {
           socket.close();
           reject(new Error("Streaming authentication timeout"));
-        }, 25_000);
+        }, 18_000);
 
         socket.onopen = () => {
           this.socket = socket;
