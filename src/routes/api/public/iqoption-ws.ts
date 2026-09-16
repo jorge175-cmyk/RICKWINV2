@@ -94,7 +94,7 @@ export const Route = createFileRoute("/api/public/iqoption-ws")({
                 upstreamReady = true;
                 clearTimeout(authenticationTimer);
                 for (const queued of pending.splice(0)) upstream.send(queued);
-                server.send(JSON.stringify({ name: "proxy-ready", msg: { ok: true } }));
+                toClient(JSON.stringify({ name: "proxy-ready", msg: { ok: true } }));
               }
               // Answering the provider heartbeat keeps this channel alive for
               // hours instead of being dropped as idle.
@@ -108,7 +108,7 @@ export const Route = createFileRoute("/api/public/iqoption-ws")({
                   }),
                 );
               }
-              server.send(data);
+              toClient(data);
             } catch {
               // client gone
             }
@@ -121,7 +121,7 @@ export const Route = createFileRoute("/api/public/iqoption-ws")({
         const keepAlive = setInterval(() => {
           if (closed) return;
           try {
-            server.send(JSON.stringify({ name: "proxy-keepalive", msg: { at: Date.now() } }));
+            toClient(JSON.stringify({ name: "proxy-keepalive", msg: { at: Date.now() } }));
           } catch {
             closeBoth();
           }
