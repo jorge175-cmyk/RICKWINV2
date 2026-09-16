@@ -344,49 +344,91 @@ function MirrorPage() {
         {groups.map((group) => {
           const verdict = verdicts[group.liveAsset];
           const loading = pendingVerdict === group.liveAsset;
-          const best = group.matches[0];
-          const hasPerfect = group.matches.some((m) => m.similarity >= 99.9);
-          const nextStep = best?.projection?.[0];
+          const perfectMatch = group.matches.find((m) => m.similarity >= 99.9);
+          const hasPerfect = perfectMatch != null;
+          /** O plano de operações segue a repetição idêntica quando existe. */
+          const planMatch = perfectMatch ?? group.matches[0];
+          const plan = (planMatch?.projection ?? []).slice(0, 5);
           return (
             <section key={group.liveAsset} className="space-y-3">
               <div
-                className={`flex flex-wrap items-center gap-3 rounded-xl border p-4 ${
+                className={`space-y-3 rounded-xl border p-4 ${
                   hasPerfect
                     ? "border-2 border-primary bg-primary/10 shadow-lg shadow-primary/20"
                     : "border-border/50 bg-surface/40"
                 }`}
               >
-                <div className="space-y-0.5">
-                  <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                    Entrar neste ativo
-                  </p>
-                  <h2 className="font-display text-2xl font-bold text-foreground">{group.liveAsset}</h2>
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="space-y-0.5">
+                    <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                      Entrar neste ativo
+                    </p>
+                    <h2 className="font-display text-2xl font-bold text-foreground">{group.liveAsset}</h2>
+                  </div>
+                  {hasPerfect && (
+                    <Badge className="bg-primary text-primary-foreground">Repetição 100% idêntica</Badge>
+                  )}
+                  <Badge variant="secondary">{group.matches.length} coincidência(s)</Badge>
+                  <Badge variant="secondary">{timeframe}</Badge>
+                  {group.consensus.direction && (
+                    <Badge
+                      variant="outline"
+                      className={group.consensus.direction === "CALL" ? "text-call" : "text-put"}
+                    >
+                      Consenso: {group.consensus.direction === "CALL" ? "COMPRA" : "VENDA"} (
+                      {group.consensus.agreement}%)
+                    </Badge>
+                  )}
                 </div>
-                {hasPerfect && (
-                  <Badge className="bg-primary text-primary-foreground">Repetição 100% idêntica</Badge>
-                )}
-                <Badge variant="secondary">{group.matches.length} coincidência(s)</Badge>
-                <Badge variant="secondary">{timeframe}</Badge>
-                {group.consensus.direction && (
-                  <Badge
-                    variant="outline"
-                    className={group.consensus.direction === "CALL" ? "text-call" : "text-put"}
-                  >
-                    Consenso: {group.consensus.direction === "CALL" ? "COMPRA" : "VENDA"} (
-                    {group.consensus.agreement}%)
-                  </Badge>
-                )}
-                {nextStep && (
-                  <span
-                    className={`font-display text-sm font-bold ${nextStep.direction === "CALL" ? "text-call" : "text-put"}`}
-                  >
-                    Próxima vela {nextStep.direction === "CALL" ? "COMPRA" : "VENDA"} ·{" "}
-                    {new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" }).format(
-                      new Date(nextStep.time * 1000),
-                    )}
-                  </span>
+
+                {plan.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                      Plano das próximas {plan.length} velas · {group.liveAsset}
+                    </p>
+                    <div className="grid gap-2 sm:grid-cols-5">
+                      {plan.map((step) => {
+                        const up = step.direction === "CALL";
+                        const past = step.time * 1000 < Date.now();
+                        return (
+                          <div
+                            key={step.step}
+                            className={`rounded-lg border p-2 text-center ${
+                              past
+                                ? "border-border/40 bg-background/20 opacity-50"
+                                : up
+                                  ? "border-call/40 bg-call/10"
+                                  : "border-put/40 bg-put/10"
+                            }`}
+                          >
+                            <p className="font-display text-base font-bold tabular-nums text-foreground">
+                              {CLOCK_FMT.format(new Date(step.time * 1000))}
+                            </p>
+                            <p
+                              className={`font-display text-sm font-bold ${up ? "text-call" : "text-put"}`}
+                            >
+                              {up ? "COMPRA" : "VENDA"}
+                            </p>
+                            <p className="text-[10px] text-muted-foreground">
+                              {past ? "vela já passou" : `vela ${step.step}`}
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {group.liveAsset}:{" "}
+                      {plan
+                        .map(
+                          (step) =>
+                            `${step.direction === "CALL" ? "compra" : "venda"} ${CLOCK_FMT.format(new Date(step.time * 1000))}`,
+                        )
+                        .join(" · ")}
+                    </p>
+                  </div>
                 )}
               </div>
+
 
 
               <div className="grid gap-4">
