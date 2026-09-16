@@ -493,6 +493,20 @@ class IqOptionClient {
     const asset = this.idToName.get(Number(candle["active_id"]));
     if (!asset) return;
 
+    // Clock refinement from the provider timestamp (ns in `at`, s in `to`),
+    // smoothed so network latency doesn't make bucket math jump around.
+    const atMs = candle["at"]
+      ? Math.floor(Number(candle["at"]) / 1_000_000)
+      : candle["to"]
+        ? Number(candle["to"]) * 1000
+        : 0;
+    if (Number.isFinite(atMs) && atMs > 0) {
+      const offset = atMs - Date.now();
+      this.serverTimeOffsetMs =
+        this.serverTimeOffsetMs === 0 ? offset : this.serverTimeOffsetMs * 0.9 + offset * 0.1;
+    }
+
+
     for (const handler of [...this.tickHandlers]) {
       handler({
         asset,
