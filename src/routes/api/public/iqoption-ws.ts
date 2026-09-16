@@ -65,6 +65,17 @@ export const Route = createFileRoute("/api/public/iqoption-ws")({
         server.accept?.();
 
         const pending: string[] = [];
+        // Frames can arrive from upstream before the browser side is OPEN.
+        // Without this queue the first frames are lost and the client stalls.
+        const pendingToClient: string[] = [];
+        const toClient = (data: string) => {
+          if (server.readyState === 1) {
+            for (const queued of pendingToClient.splice(0)) server.send(queued);
+            server.send(data);
+          } else {
+            pendingToClient.push(data);
+          }
+        };
         let upstreamReady = false;
         let closed = false;
         const authenticationTimer = setTimeout(() => closeBoth(), 20_000);
@@ -83,7 +94,7 @@ export const Route = createFileRoute("/api/public/iqoption-ws")({
                 upstreamReady = true;
                 clearTimeout(authenticationTimer);
                 for (const queued of pending.splice(0)) upstream.send(queued);
-                server.send(JSON.stringify({ name: "proxy-ready", msg: { ok: true } }));
+                toClient(JSON.stringify({ name: "proxy-ready", msg: { ok: true } }));
               }
               // Answering the provider heartbeat keeps this channel alive for
               // hours instead of being dropped as idle.
@@ -97,7 +108,7 @@ export const Route = createFileRoute("/api/public/iqoption-ws")({
                   }),
                 );
               }
-              server.send(data);
+              toClient(data);
             } catch {
               // client gone
             }
@@ -110,7 +121,7 @@ export const Route = createFileRoute("/api/public/iqoption-ws")({
         const keepAlive = setInterval(() => {
           if (closed) return;
           try {
-            server.send(JSON.stringify({ name: "proxy-keepalive", msg: { at: Date.now() } }));
+            toClient(JSON.stringify({ name: "proxy-keepalive", msg: { at: Date.now() } }));
           } catch {
             closeBoth();
           }
