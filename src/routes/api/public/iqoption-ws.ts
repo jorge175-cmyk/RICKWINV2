@@ -80,10 +80,26 @@ export const Route = createFileRoute("/api/public/iqoption-ws")({
         let closed = false;
         const authenticationTimer = setTimeout(() => closeBoth(), 20_000);
 
-        upstream.addEventListener("open", () => {
+        let authenticationStarted = false;
+        const startAuthentication = () => {
+          if (authenticationStarted || closed || upstream.readyState !== WebSocket.OPEN) return;
+          authenticationStarted = true;
           authenticate(upstream, ssid);
           upstream.send(JSON.stringify({ name: "setOptions", msg: { sendResults: true } }));
-        });
+          upstream.send(
+            JSON.stringify({
+              name: "sendMessage",
+              request_id: "proxy-init",
+              msg: { name: "get-initialization-data", version: "3.0", body: {} },
+            }),
+          );
+        };
+
+        // Worker upgrades commonly return an already-open WebSocket. In that
+        // case the `open` event has happened before listeners can be attached,
+        // so waiting only for it leaves the proxy stuck until auth timeout.
+        upstream.addEventListener("open", startAuthentication);
+        startAuthentication();
 
         upstream.addEventListener("message", (event) => {
           const data = (event as MessageEvent).data;
