@@ -17,7 +17,8 @@ import { toast } from "sonner";
 import { ArrowLeft, Copy, Loader2, Search, Sparkles, StopCircle, Wifi, WifiOff } from "lucide-react";
 
 const FALLBACK_ASSETS = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CHF", "USD/CAD"];
-const CHUNK = 10;
+/** Lotes pequenos: os contadores da tela atualizam a cada poucos segundos. */
+const CHUNK = 4;
 
 export const Route = createFileRoute("/_layout/mirror")({
   component: MirrorPage,
@@ -54,7 +55,8 @@ function MirrorPage() {
   const [windowSize, setWindowSize] = useState(24);
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState({ done: 0, total: 0 });
-  const [stored, setStored] = useState({ assets: 0, candles: 0 });
+  /** `null` = o primeiro lote de histórico ainda não voltou do servidor. */
+  const [stored, setStored] = useState<{ assets: number; candles: number } | null>(null);
   const [skipped, setSkipped] = useState(0);
   const [groups, setGroups] = useState<MirrorAssetGroup[]>([]);
   const [verdicts, setVerdicts] = useState<Record<string, MirrorVerdict>>({});
@@ -100,6 +102,7 @@ function MirrorPage() {
     setGroups([]);
     setVerdicts({});
     setSkipped(0);
+    setStored(null);
     let skippedTotal = 0;
 
     for (const stage of ["collect", "match"] as const) {
@@ -318,8 +321,19 @@ function MirrorPage() {
               <span>
                 {progress.done} de {progress.total} ativos
               </span>
-              <Badge variant="secondary">{stored.assets} ativos com histórico</Badge>
-              <Badge variant="secondary">{stored.candles.toLocaleString("pt-BR")} velas na memória</Badge>
+              {stored ? (
+                <>
+                  <Badge variant="secondary">{stored.assets} ativos com histórico</Badge>
+                  <Badge variant="secondary">
+                    {stored.candles.toLocaleString("pt-BR")} velas na memória
+                  </Badge>
+                </>
+              ) : (
+                <Badge variant="secondary" className="gap-1.5">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Baixando o primeiro lote de histórico…
+                </Badge>
+              )}
               {skipped > 0 && <span>{skipped} ativo(s) sem histórico suficiente</span>}
             </div>
             <Progress value={pct} className="h-1.5" />
