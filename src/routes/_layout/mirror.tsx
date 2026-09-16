@@ -58,9 +58,12 @@ function MirrorPage() {
   const [verdicts, setVerdicts] = useState<Record<string, MirrorVerdict>>({});
   const [pendingVerdict, setPendingVerdict] = useState<string | null>(null);
   const cancelRef = useRef(false);
-  /** O canal ao vivo só abre quando a varredura começa. */
-  const [streamOn, setStreamOn] = useState(false);
-  const { status: connectionStatus, error: connectionError } = useIqOptionConnection(streamOn);
+  /**
+   * A varredura não usa o canal ao vivo do navegador: o histórico é buscado no
+   * servidor. O aviso reflete, portanto, se a corretora está respondendo às
+   * buscas de histórico — e não um WebSocket que esta página nunca abre.
+   */
+  const [feed, setFeed] = useState<"idle" | "ok" | "error">("idle");
 
   const { data: otcAssets = [] } = useQuery({
     queryKey: ["otcAssets"],
