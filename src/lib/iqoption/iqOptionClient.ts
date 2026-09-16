@@ -93,6 +93,32 @@ class IqOptionClient {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private nextReconnectAt = 0;
+  private catalogueRefresh: Promise<void> | null = null;
+
+  constructor() {
+    if (typeof window === "undefined") return;
+    // Browsers freeze background tabs: the socket stays OPEN while no frame
+    // arrives. These triggers prove liveness the moment the user comes back.
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") this.ensureFresh(FRESH_ON_FOCUS_MS);
+    });
+    window.addEventListener("focus", () => this.ensureFresh(FRESH_ON_FOCUS_MS));
+    window.addEventListener("online", () => this.ensureFresh(0));
+  }
+
+  /**
+   * Forces recovery when no frame (market data OR heartbeat) arrived within
+   * `maxIdleMs`. Anything fresher is treated as a healthy channel.
+   */
+  ensureFresh(maxIdleMs: number) {
+    if (!this.hasSubscriptions()) return;
+    if (this.connecting || this.reconnectTimer) return;
+    if (this.socket?.readyState === WebSocket.CONNECTING) return;
+    const idle = Date.now() - this.lastFrameAt;
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN || idle > maxIdleMs) {
+      this.hardReconnect(true);
+    }
+  }
 
   getStatus() {
     return this.status;
