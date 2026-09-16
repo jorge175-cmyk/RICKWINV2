@@ -43,7 +43,36 @@ const QUOTE_BATCH_DELAY_MS = 400;
 // The upstream session is reused, so reconnecting is cheap: retry fast and
 // cap the delay low so a dropped channel resumes within seconds.
 const MAX_RECONNECT_DELAY_MS = 30_000;
+// Asset catalogue tolerance: a slow provider answer must never turn into a
+// failed connection. The last known catalogue is reused instead.
+const CATALOGUE_WAIT_MS = 2_500;
+const CATALOGUE_CACHE_KEY = "iq-active-ids";
+const CATALOGUE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+// Zombie-socket thresholds per trigger (tab focus is the strictest).
+const FRESH_ON_FOCUS_MS = 20_000;
+const FRESH_BACKGROUND_MS = 60_000;
 
+function readCachedActiveIds(): Record<string, number> | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(CATALOGUE_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { at?: number; map?: Record<string, number> };
+    if (!parsed.map || !parsed.at || Date.now() - parsed.at > CATALOGUE_CACHE_TTL_MS) return null;
+    return Object.keys(parsed.map).length > 0 ? parsed.map : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedActiveIds(map: Record<string, number>) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(CATALOGUE_CACHE_KEY, JSON.stringify({ at: Date.now(), map }));
+  } catch {
+    /* storage unavailable */
+  }
+}
 
 class IqOptionClient {
   private socket: WebSocket | null = null;
