@@ -65,41 +65,14 @@ export const Route = createFileRoute("/api/public/iqoption-ws")({
         server.accept?.();
 
         const pending: string[] = [];
-        // Frames can arrive from upstream before the browser side is OPEN.
-        // Without this queue the first frames are lost and the client stalls.
-        const pendingToClient: string[] = [];
-        const toClient = (data: string) => {
-          if (server.readyState === 1) {
-            for (const queued of pendingToClient.splice(0)) server.send(queued);
-            server.send(data);
-          } else {
-            pendingToClient.push(data);
-          }
-        };
         let upstreamReady = false;
         let closed = false;
         const authenticationTimer = setTimeout(() => closeBoth(), 20_000);
 
-        let authenticationStarted = false;
-        const startAuthentication = () => {
-          if (authenticationStarted || closed || upstream.readyState !== WebSocket.OPEN) return;
-          authenticationStarted = true;
+        upstream.addEventListener("open", () => {
           authenticate(upstream, ssid);
           upstream.send(JSON.stringify({ name: "setOptions", msg: { sendResults: true } }));
-          upstream.send(
-            JSON.stringify({
-              name: "sendMessage",
-              request_id: "proxy-init",
-              msg: { name: "get-initialization-data", version: "3.0", body: {} },
-            }),
-          );
-        };
-
-        // Worker upgrades commonly return an already-open WebSocket. In that
-        // case the `open` event has happened before listeners can be attached,
-        // so waiting only for it leaves the proxy stuck until auth timeout.
-        upstream.addEventListener("open", startAuthentication);
-        startAuthentication();
+        });
 
         upstream.addEventListener("message", (event) => {
           const data = (event as MessageEvent).data;
@@ -110,7 +83,7 @@ export const Route = createFileRoute("/api/public/iqoption-ws")({
                 upstreamReady = true;
                 clearTimeout(authenticationTimer);
                 for (const queued of pending.splice(0)) upstream.send(queued);
-                toClient(JSON.stringify({ name: "proxy-ready", msg: { ok: true } }));
+                server.send(JSON.stringify({ name: "proxy-ready", msg: { ok: true } }));
               }
               // Answering the provider heartbeat keeps this channel alive for
               // hours instead of being dropped as idle.
@@ -124,7 +97,7 @@ export const Route = createFileRoute("/api/public/iqoption-ws")({
                   }),
                 );
               }
-              toClient(data);
+              server.send(data);
             } catch {
               // client gone
             }
@@ -137,7 +110,7 @@ export const Route = createFileRoute("/api/public/iqoption-ws")({
         const keepAlive = setInterval(() => {
           if (closed) return;
           try {
-            toClient(JSON.stringify({ name: "proxy-keepalive", msg: { at: Date.now() } }));
+            server.send(JSON.stringify({ name: "proxy-keepalive", msg: { at: Date.now() } }));
           } catch {
             closeBoth();
           }

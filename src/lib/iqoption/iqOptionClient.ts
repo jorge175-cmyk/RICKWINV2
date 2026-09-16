@@ -31,31 +31,10 @@ type QuoteHandler = (quote: LiveQuote) => void;
 type StatusHandler = (status: StreamStatus, error?: string) => void;
 
 const PROXY_PATH = "/api/public/iqoption-ws";
-
-/** Message shown when the runtime itself cannot hold a live channel. */
-export const PREVIEW_STREAM_MESSAGE =
-  "O canal ao vivo funciona no app publicado; aqui no preview os dados vêm do histórico.";
-
-/**
- * The dev/preview runtime does not answer WebSocket upgrades, so a failed
- * connection there is an environment limit, not a broker problem. The published
- * app keeps the same channel open for hours.
- */
-export function isPreviewRuntime(): boolean {
-  if (typeof window === "undefined") return false;
-  const host = window.location.hostname;
-  return (
-    host === "localhost" ||
-    host === "127.0.0.1" ||
-    host.endsWith(".lovableproject.com") ||
-    host.startsWith("id-preview--")
-  );
-}
-
 // Quiet OTC assets can go a long while without a printable frame. The proxy
 // also sends its own keepalive, so anything under a minute produced false
 // "zombie" verdicts and constant channel churn.
-
+const ZOMBIE_TIMEOUT_MS = 120_000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const WATCHDOG_INTERVAL_MS = 5_000;
 // Batched fan-out for the full asset catalogue over the single channel.
@@ -64,64 +43,7 @@ const QUOTE_BATCH_DELAY_MS = 400;
 // The upstream session is reused, so reconnecting is cheap: retry fast and
 // cap the delay low so a dropped channel resumes within seconds.
 const MAX_RECONNECT_DELAY_MS = 30_000;
-// Asset catalogue tolerance: a slow provider answer must never turn into a
-// failed connection. The last known catalogue is reused instead.
-const CATALOGUE_WAIT_MS = 2_500;
-const CATALOGUE_CACHE_KEY = "iq-active-ids";
-const CATALOGUE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-// Zombie-socket thresholds per trigger (tab focus is the strictest).
-const FRESH_ON_FOCUS_MS = 20_000;
-const FRESH_BACKGROUND_MS = 60_000;
 
-// Embedded fallback catalogue: if the provider's initialization data is slow or
-// incomplete, the channel still becomes usable instead of looping on errors.
-const FALLBACK_ACTIVES: Record<string, number> = {
-  EURUSD: 1,
-  EURGBP: 2,
-  EURJPY: 4,
-  GBPUSD: 5,
-  USDJPY: 6,
-  NZDUSD: 8,
-  AUDUSD: 99,
-  USDCAD: 100,
-  EURCAD: 105,
-  "EURUSD-OTC": 76,
-  "EURGBP-OTC": 77,
-  "EURJPY-OTC": 79,
-  "GBPUSD-OTC": 81,
-  "USDJPY-OTC": 85,
-  "AUDCAD-OTC": 86,
-  "AUDUSD-OTC": 2111,
-  "AUDJPY-OTC": 2113,
-  "EURCAD-OTC": 2117,
-  "CADCHF-OTC": 2119,
-  "BTCUSD-OP": 1916,
-  "ETHUSD-OP": 1918,
-  "ETHUSD-OTC": 1941,
-};
-
-function readCachedActiveIds(): Record<string, number> | null {
-
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(CATALOGUE_CACHE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { at?: number; map?: Record<string, number> };
-    if (!parsed.map || !parsed.at || Date.now() - parsed.at > CATALOGUE_CACHE_TTL_MS) return null;
-    return Object.keys(parsed.map).length > 0 ? parsed.map : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeCachedActiveIds(map: Record<string, number>) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(CATALOGUE_CACHE_KEY, JSON.stringify({ at: Date.now(), map }));
-  } catch {
-    /* storage unavailable */
-  }
-}
 
 class IqOptionClient {
   private socket: WebSocket | null = null;
@@ -142,34 +64,6 @@ class IqOptionClient {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private nextReconnectAt = 0;
-  private catalogueRefresh: Promise<void> | null = null;
-  private catalogueFromProvider = false;
-
-
-  constructor() {
-    if (typeof window === "undefined") return;
-    // Browsers freeze background tabs: the socket stays OPEN while no frame
-    // arrives. These triggers prove liveness the moment the user comes back.
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") this.ensureFresh(FRESH_ON_FOCUS_MS);
-    });
-    window.addEventListener("focus", () => this.ensureFresh(FRESH_ON_FOCUS_MS));
-    window.addEventListener("online", () => this.ensureFresh(0));
-  }
-
-  /**
-   * Forces recovery when no frame (market data OR heartbeat) arrived within
-   * `maxIdleMs`. Anything fresher is treated as a healthy channel.
-   */
-  ensureFresh(maxIdleMs: number) {
-    if (!this.hasSubscriptions()) return;
-    if (this.connecting || this.reconnectTimer) return;
-    if (this.socket?.readyState === WebSocket.CONNECTING) return;
-    const idle = Date.now() - this.lastFrameAt;
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN || idle > maxIdleMs) {
-      this.hardReconnect(true);
-    }
-  }
 
   getStatus() {
     return this.status;
@@ -215,11 +109,8 @@ class IqOptionClient {
       return;
     }
     this.subscriptions.set(key, { asset: normalizedAsset, sizeSeconds, count: 1 });
-    const wasOpen = this.socket?.readyState === WebSocket.OPEN;
     await this.ensureConnected();
-    // A fresh connection replays the complete registry on `proxy-ready`.
-    // Send directly only when this subscription joined an already-live socket.
-    if (wasOpen) this.sendCandleSubscribe(normalizedAsset, sizeSeconds);
+    this.sendCandleSubscribe(normalizedAsset, sizeSeconds);
   }
 
   /**
@@ -227,13 +118,8 @@ class IqOptionClient {
    * whenever a component unmounts caused constant channel churn upstream.
    */
   unsubscribe(asset: string, sizeSeconds: number) {
-    const key = `${asset.toUpperCase()}:${sizeSeconds}`;
-    const entry = this.subscriptions.get(key);
-    if (!entry) return;
-    entry.count -= 1;
-    if (entry.count > 0) return;
-    this.subscriptions.delete(key);
-    this.sendCandleUnsubscribe(entry.asset, entry.sizeSeconds);
+    const entry = this.subscriptions.get(`${asset.toUpperCase()}:${sizeSeconds}`);
+    if (entry && entry.count > 0) entry.count -= 1;
   }
 
   async subscribeQuotes(asset: string) {
@@ -244,19 +130,13 @@ class IqOptionClient {
       return;
     }
     this.quoteSubscriptions.set(normalizedAsset, { asset: normalizedAsset, count: 1 });
-    const wasOpen = this.socket?.readyState === WebSocket.OPEN;
     await this.ensureConnected();
-    if (wasOpen) this.sendQuoteSubscribe(normalizedAsset);
+    this.sendQuoteSubscribe(normalizedAsset);
   }
 
   unsubscribeQuotes(asset: string) {
-    const key = asset.toUpperCase();
-    const entry = this.quoteSubscriptions.get(key);
-    if (!entry) return;
-    entry.count -= 1;
-    if (entry.count > 0) return;
-    this.quoteSubscriptions.delete(key);
-    this.sendQuoteUnsubscribe(entry.asset);
+    const entry = this.quoteSubscriptions.get(asset.toUpperCase());
+    if (entry && entry.count > 0) entry.count -= 1;
   }
 
   /**
@@ -359,73 +239,27 @@ class IqOptionClient {
     return this.connecting;
   }
 
-  private applyCatalogue(map: Record<string, number>) {
-    // Live catalogue wins; the embedded fallback fills whatever is missing.
-    const merged = { ...FALLBACK_ACTIVES, ...map };
-    this.activeIds = merged;
-    this.idToName.clear();
-    for (const [name, id] of Object.entries(merged)) {
-      if (!this.idToName.has(id)) this.idToName.set(id, name);
-    }
-    return Object.keys(map).length > 0;
-  }
-
-
-  /** Re-sends every subscription; used after reconnects and catalogue refreshes. */
-  private resubscribeAll() {
-    for (const { asset, sizeSeconds } of this.subscriptions.values()) {
-      this.sendCandleSubscribe(asset, sizeSeconds);
-    }
-    for (const { asset } of this.quoteSubscriptions.values()) this.sendQuoteSubscribe(asset);
-  }
-
-  /**
-   * Tolerant catalogue load: waits a short moment for the provider, otherwise
-   * falls back to the cached map and finally to the embedded one, so a slow
-   * answer never becomes an error loop. The refresh keeps running and
-   * re-subscribes when it lands.
-   */
-  private async ensureCatalogue(): Promise<void> {
-    if (this.catalogueFromProvider) return;
-
-    if (!this.catalogueRefresh) {
-      this.catalogueRefresh = getActiveIds()
-        .then((map) => {
-          if (this.applyCatalogue(map)) {
-            this.catalogueFromProvider = true;
-            writeCachedActiveIds(map);
-            if (this.socket?.readyState === WebSocket.OPEN) this.resubscribeAll();
-          }
-        })
-        .catch(() => {
-          /* handled by the fallback below */
-        })
-        .finally(() => {
-          this.catalogueRefresh = null;
-        });
-    }
-
-    await Promise.race([
-      this.catalogueRefresh,
-      new Promise<void>((resolve) => setTimeout(resolve, CATALOGUE_WAIT_MS)),
-    ]);
-
-    if (this.catalogueFromProvider) return;
-    const cached = readCachedActiveIds();
-    this.applyCatalogue(cached ?? {});
-  }
-
-
-
   private async connect(): Promise<void> {
     this.setStatus("connecting");
     try {
-      await this.ensureCatalogue();
+      if (!this.activeIds || Object.keys(this.activeIds).length === 0) {
+        const activeIds = await getActiveIds();
+        if (Object.keys(activeIds).length === 0) {
+          this.activeIds = null;
+          throw new Error("IQ Option asset list temporarily unavailable");
+        }
+        this.activeIds = activeIds;
+        this.idToName.clear();
+        for (const [name, id] of Object.entries(this.activeIds)) {
+          if (!this.idToName.has(id)) this.idToName.set(id, name);
+        }
+      }
 
       const { data } = await supabase.auth.getSession();
       const token = data.session?.access_token;
       if (!token) {
-        throw new Error("Sign in required for live market data");
+        this.setStatus("error", "Sign in required for live market data");
+        return;
       }
 
       const url = `${window.location.origin.replace(/^http/, "ws")}${PROXY_PATH}?token=${encodeURIComponent(token)}`;
@@ -435,7 +269,7 @@ class IqOptionClient {
         const timer = setTimeout(() => {
           socket.close();
           reject(new Error("Streaming authentication timeout"));
-        }, 18_000);
+        }, 25_000);
 
         socket.onopen = () => {
           this.socket = socket;
@@ -451,7 +285,12 @@ class IqOptionClient {
                 this.lastFrameAt = Date.now();
                 this.reconnectAttempts = 0;
                 this.setStatus("live");
-                this.resubscribeAll();
+                for (const { asset, sizeSeconds } of this.subscriptions.values()) {
+                  this.sendCandleSubscribe(asset, sizeSeconds);
+                }
+                for (const { asset } of this.quoteSubscriptions.values()) {
+                  this.sendQuoteSubscribe(asset);
+                }
                 this.startWatchdog();
                 resolve();
               }
@@ -463,7 +302,6 @@ class IqOptionClient {
         };
         socket.onerror = () => {
           clearTimeout(timer);
-          if (this.socket === socket) this.setStatus("connecting", "Canal interrompido; retomando…");
           reject(new Error("Streaming connection failed"));
         };
         socket.onclose = () => {
@@ -471,26 +309,17 @@ class IqOptionClient {
           if (!proxyReady) reject(new Error("Streaming closed before authentication"));
           if (this.socket === socket) {
             this.socket = null;
-            if (this.hasSubscriptions()) {
-              this.setStatus("connecting", "Canal interrompido; retomando…");
-              this.scheduleReconnect();
-            } else {
-              this.setStatus("idle");
-            }
+            if (this.hasSubscriptions()) this.scheduleReconnect();
           }
         };
       });
     } catch (error) {
-      // No realtime channel available (e.g. local dev/preview runtime, which
-      // cannot answer a WebSocket upgrade) — consumers keep working through
-      // periodic history refreshes, and the UI says so explicitly instead of
-      // looking like a broker outage.
-      const reason = error instanceof Error ? error.message : "Streaming unavailable";
-      this.setStatus("polling", isPreviewRuntime() ? PREVIEW_STREAM_MESSAGE : reason);
+      // No realtime channel available (e.g. local dev runtime) — consumers
+      // keep working through periodic history refreshes.
+      this.setStatus("polling", error instanceof Error ? error.message : "Streaming unavailable");
       this.scheduleReconnect();
     }
   }
-
 
   private handleFrame(raw: unknown) {
     if (typeof raw !== "string") return;
@@ -537,20 +366,6 @@ class IqOptionClient {
     const asset = this.idToName.get(Number(candle["active_id"]));
     if (!asset) return;
 
-    // Clock refinement from the provider timestamp (ns in `at`, s in `to`),
-    // smoothed so network latency doesn't make bucket math jump around.
-    const atMs = candle["at"]
-      ? Math.floor(Number(candle["at"]) / 1_000_000)
-      : candle["to"]
-        ? Number(candle["to"]) * 1000
-        : 0;
-    if (Number.isFinite(atMs) && atMs > 0) {
-      const offset = atMs - Date.now();
-      this.serverTimeOffsetMs =
-        this.serverTimeOffsetMs === 0 ? offset : this.serverTimeOffsetMs * 0.9 + offset * 0.1;
-    }
-
-
     for (const handler of [...this.tickHandlers]) {
       handler({
         asset,
@@ -575,8 +390,17 @@ class IqOptionClient {
       }, HEARTBEAT_INTERVAL_MS);
     }
     if (this.watchdog) return;
-    // Background check with a looser threshold; focus/network use tighter ones.
-    this.watchdog = setInterval(() => this.ensureFresh(FRESH_BACKGROUND_MS), WATCHDOG_INTERVAL_MS);
+    this.watchdog = setInterval(() => {
+      if (!this.hasSubscriptions()) return;
+      // Never interfere with a handshake in flight or a scheduled retry:
+      // doing so aborted healthy connections and looped forever.
+      if (this.connecting || this.reconnectTimer) return;
+      if (this.socket?.readyState === WebSocket.CONNECTING) return;
+      const stale = Date.now() - this.lastFrameAt > ZOMBIE_TIMEOUT_MS;
+      if (stale || !this.socket || this.socket.readyState !== WebSocket.OPEN) {
+        this.hardReconnect();
+      }
+    }, WATCHDOG_INTERVAL_MS);
   }
 
   private scheduleReconnect() {
@@ -608,10 +432,7 @@ class IqOptionClient {
       /* noop */
     }
     this.socket = null;
-    if (this.hasSubscriptions()) {
-      this.setStatus("connecting", "Restabelecendo canal ao vivo…");
-      void this.ensureConnected();
-    }
+    if (this.hasSubscriptions()) void this.ensureConnected();
   }
 
   disconnect() {

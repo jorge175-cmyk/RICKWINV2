@@ -15,7 +15,7 @@ export const Route = createFileRoute("/auth")({
   ssr: false,
   beforeLoad: async () => {
     const { data } = await supabase.auth.getUser();
-    if (data.user) throw redirect({ to: "/mirror" });
+    if (data.user) throw redirect({ to: "/trading" });
   },
   component: AuthPage,
   head: () => ({
@@ -44,12 +44,12 @@ function AuthPage() {
         const { error } = await supabase.auth.signUp({ email, password });
         if (error) throw error;
         toast.success("Account created! Welcome to BinaryPulse.");
-        navigate({ to: "/mirror" });
+        navigate({ to: "/trading" });
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
         toast.success("Welcome back!");
-        navigate({ to: "/mirror" });
+        navigate({ to: "/trading" });
       }
     } catch (err: any) {
       toast.error(err.message || "Authentication failed");
@@ -67,7 +67,7 @@ function AuthPage() {
       return;
     }
     if (result.redirected) return;
-    navigate({ to: "/mirror" });
+    navigate({ to: "/trading" });
   };
 
   return (
