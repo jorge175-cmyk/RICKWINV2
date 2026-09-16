@@ -345,6 +345,41 @@ function MirrorPage() {
           </Card>
         )}
 
+        {(() => {
+          const perfect = groups.filter((g) => g.matches.some((m) => m.similarity >= 99.9));
+          if (perfect.length === 0) return null;
+          return (
+            <Card className="border-2 border-primary bg-primary/10 shadow-lg shadow-primary/20">
+              <CardHeader className="pb-2">
+                <CardTitle className="font-display text-sm font-bold text-primary">
+                  {perfect.length} ativo(s) com repetição 100% idêntica
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {perfect.map((g) => {
+                  const m = g.matches.find((x) => x.similarity >= 99.9)!;
+                  const plan = m.projection.slice(0, 5);
+                  return (
+                    <p key={g.liveAsset} className="text-sm">
+                      <span className="font-display font-bold text-foreground">{g.liveAsset}</span>{" "}
+                      {plan.map((step, i) => (
+                        <span key={step.step}>
+                          {i > 0 && <span className="text-muted-foreground"> · </span>}
+                          <span className={step.direction === "CALL" ? "text-call" : "text-put"}>
+                            {step.direction === "CALL" ? "compra" : "venda"}{" "}
+                            {CLOCK_FMT.format(new Date(step.time * 1000))}
+                          </span>
+                        </span>
+                      ))}
+                    </p>
+                  );
+                })}
+              </CardContent>
+            </Card>
+          );
+        })()}
+
+
         {groups.map((group) => {
           const verdict = verdicts[group.liveAsset];
           const loading = pendingVerdict === group.liveAsset;
