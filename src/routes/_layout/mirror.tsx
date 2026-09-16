@@ -102,6 +102,7 @@ function MirrorPage() {
     setGroups([]);
     setVerdicts({});
     setSkipped(0);
+    setStored(null);
     let skippedTotal = 0;
 
     for (const stage of ["collect", "match"] as const) {
