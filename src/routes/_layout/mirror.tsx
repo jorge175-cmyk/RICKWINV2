@@ -135,7 +135,12 @@ function MirrorPage() {
             ),
           );
         }
-        if (chunk.error) toast.error(chunk.error);
+        if (chunk.error) {
+          setFeed("error");
+          toast.error(chunk.error);
+        } else if (chunk.storedCandles > 0) {
+          setFeed("ok");
+        }
 
         const next = chunk.nextOffset;
         setProgress({ done: next ?? total, total });
