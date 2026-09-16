@@ -31,6 +31,27 @@ type QuoteHandler = (quote: LiveQuote) => void;
 type StatusHandler = (status: StreamStatus, error?: string) => void;
 
 const PROXY_PATH = "/api/public/iqoption-ws";
+
+/** Message shown when the runtime itself cannot hold a live channel. */
+export const PREVIEW_STREAM_MESSAGE =
+  "O canal ao vivo funciona no app publicado; aqui no preview os dados vêm do histórico.";
+
+/**
+ * The dev/preview runtime does not answer WebSocket upgrades, so a failed
+ * connection there is an environment limit, not a broker problem. The published
+ * app keeps the same channel open for hours.
+ */
+export function isPreviewRuntime(): boolean {
+  if (typeof window === "undefined") return false;
+  const host = window.location.hostname;
+  return (
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host.endsWith(".lovableproject.com") ||
+    host.startsWith("id-preview--")
+  );
+}
+
 // Quiet OTC assets can go a long while without a printable frame. The proxy
 // also sends its own keepalive, so anything under a minute produced false
 // "zombie" verdicts and constant channel churn.
@@ -460,12 +481,16 @@ class IqOptionClient {
         };
       });
     } catch (error) {
-      // No realtime channel available (e.g. local dev runtime) — consumers
-      // keep working through periodic history refreshes.
-      this.setStatus("polling", error instanceof Error ? error.message : "Streaming unavailable");
+      // No realtime channel available (e.g. local dev/preview runtime, which
+      // cannot answer a WebSocket upgrade) — consumers keep working through
+      // periodic history refreshes, and the UI says so explicitly instead of
+      // looking like a broker outage.
+      const reason = error instanceof Error ? error.message : "Streaming unavailable";
+      this.setStatus("polling", isPreviewRuntime() ? PREVIEW_STREAM_MESSAGE : reason);
       this.scheduleReconnect();
     }
   }
+
 
   private handleFrame(raw: unknown) {
     if (typeof raw !== "string") return;

@@ -11,6 +11,8 @@ import { getOtcAssets } from "@/lib/iqoption/candles.functions";
 import { mirrorScanChunk, type MirrorAssetGroup } from "@/lib/analysis/mirror.functions";
 import { mirrorVerdict, type MirrorVerdict } from "@/lib/analysis/mirrorVerdict.functions";
 import { useIqOptionConnection } from "@/lib/iqoption/useIqOptionStream";
+import { PREVIEW_STREAM_MESSAGE, isPreviewRuntime } from "@/lib/iqoption/iqOptionClient";
+
 import { toast } from "sonner";
 import { ArrowLeft, Copy, Loader2, Search, Sparkles, StopCircle, Wifi, WifiOff } from "lucide-react";
 
@@ -216,6 +218,15 @@ function MirrorPage() {
                 <WifiOff className="h-3.5 w-3.5" />
                 Aguardando varredura
               </Badge>
+            ) : connectionStatus === "polling" && isPreviewRuntime() ? (
+              <Badge
+                variant="outline"
+                className="gap-1.5 border-amber-400/40 bg-amber-400/10 text-amber-300"
+                title={PREVIEW_STREAM_MESSAGE}
+              >
+                <WifiOff className="h-3.5 w-3.5" />
+                Preview — histórico
+              </Badge>
             ) : (
               <Badge
                 variant="outline"
@@ -230,6 +241,7 @@ function MirrorPage() {
                     : "Desconectado"}
               </Badge>
             )}
+
             <Button asChild variant="ghost" size="sm" className="gap-2 text-muted-foreground">
               <Link to="/">
                 <ArrowLeft className="h-4 w-4" />
