@@ -28,8 +28,8 @@ export function MirrorMatchCard({ match, liveWindow }: MirrorMatchCardProps) {
   const reverseTime = match.transform === "TIME_REVERSED" || match.transform === "BOTH";
   const invertPrice = match.transform === "PRICE_INVERTED" || match.transform === "BOTH";
   const projection = match.projection ?? [];
-  /** Repetição praticamente idêntica: merece destaque visual forte. */
-  const isPerfect = match.similarity >= 99.9;
+  /** Replay vela-a-vela dentro da tolerância exata: merece destaque visual forte. */
+  const isPerfect = match.exact;
 
   return (
     <Card
@@ -121,7 +121,8 @@ export function MirrorMatchCard({ match, liveWindow }: MirrorMatchCardProps) {
             <span className="text-xs text-muted-foreground">({movePct}%)</span>
           </div>
           <span className="text-xs text-muted-foreground">
-            Volatilidade {match.volatilityRatio}× · alvo {match.projectedClose.toFixed(5)}
+            Volatilidade {match.volatilityRatio}× · desvio máx {(match.maxDeviation * 100).toFixed(1)}% · alvo{" "}
+            {match.projectedClose.toFixed(5)}
           </span>
         </div>
       </CardContent>

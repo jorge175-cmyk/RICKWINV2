@@ -312,6 +312,8 @@ export function findMatchesInSeries(
   const maxPerAsset = options.maxPerAsset ?? 3;
   const steps = Math.max(1, options.projectionSteps ?? 5);
   const stepSeconds = options.stepSeconds ?? inferStepSeconds(live);
+  const exactOnly = options.exactOnly ?? true;
+  const exactTolerance = options.exactTolerance ?? 0.05;
 
   const liveReturns = closeReturns(live);
   const k = liveReturns.length;
@@ -340,6 +342,9 @@ export function findMatchesInSeries(
       const candidate = transformReturns(winReturns, transform);
       const r = pearson(liveReturns, candidate);
       if (r < minCorrelation) continue;
+      const deviation = replayDeviation(live, window, transform);
+      const isExact = deviation <= exactTolerance;
+      if (exactOnly && !isExact) continue;
       const projection = projectedPath(hist, start, k + 1, transform, steps);
       if (!projection) continue;
 
@@ -351,6 +356,8 @@ export function findMatchesInSeries(
         transform,
         correlation: r,
         similarity: Math.round(r * 1000) / 10,
+        maxDeviation: deviation,
+        exact: isExact,
         startTime: window[0]!.time,
         endTime: last.time,
         volatilityRatio: Math.round(ratio * 100) / 100,
@@ -430,6 +437,8 @@ export function findMatchesFast(
   const maxPerAsset = options.maxPerAsset ?? 3;
   const steps = Math.max(1, options.projectionSteps ?? 5);
   const stepSeconds = options.stepSeconds ?? inferStepSeconds(live);
+  const exactOnly = options.exactOnly ?? true;
+  const exactTolerance = options.exactTolerance ?? 0.05;
 
   const liveReturns = closeReturns(live);
   const k = liveReturns.length;
@@ -480,9 +489,12 @@ export function findMatchesFast(
       const r = (dot / k - vStats.mean * winStats.mean) / (vStats.sd * winStats.sd);
       if (!Number.isFinite(r) || r < minCorrelation) continue;
 
+      const window = hist.slice(start, start + k + 1);
+      const deviation = replayDeviation(live, window, transform);
+      const isExact = deviation <= exactTolerance;
+      if (exactOnly && !isExact) continue;
       const projection = projectedPath(hist, start, k + 1, transform, steps);
       if (!projection) continue;
-      const window = hist.slice(start, start + k + 1);
       const scaled = projection.value / (ratio || 1);
       found.push({
         asset,
@@ -490,6 +502,8 @@ export function findMatchesFast(
         transform,
         correlation: r,
         similarity: Math.round(r * 1000) / 10,
+        maxDeviation: deviation,
+        exact: isExact,
         startTime: window[0]!.time,
         endTime: window[window.length - 1]!.time,
         volatilityRatio: Math.round(ratio * 100) / 100,

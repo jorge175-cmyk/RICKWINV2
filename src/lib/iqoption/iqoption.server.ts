@@ -14,6 +14,11 @@ const SSID_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 // the provider treat the account as a brand new session.
 const SESSION_IDLE_MS = 24 * 60 * 60 * 1000;
 
+// Tickers confirmed by the account owner as no longer offered in the IQ Option
+// app, but still present (unsuspended) in the broker's initialization catalog.
+// Add here if another stale/delisted asset surfaces in the scan.
+const BLOCKED_ACTIVE_NAMES = new Set(["ETHBTC", "ETHBTC-OTC"]);
+
 const HEARTBEAT_INTERVAL_MS = 20_000;
 const MAX_BACKOFF_MS = 60 * 60 * 1000;
 const LOGIN_LEASE_SECONDS = 25;
@@ -430,10 +435,23 @@ export async function getActiveIdMap(): Promise<Record<string, number>> {
       msg: { name: "get-initialization-data", version: "3.0", body: {} },
     });
     const frame = await waitFor((f) => f.name === "initialization-data" || f.request_id === "init", 15_000);
-    const msg = (frame.msg ?? {}) as Record<string, { actives?: Record<string, { name?: string }> }>;
+    interface RawActive {
+      name?: string;
+      enabled?: boolean;
+      is_suspended?: boolean;
+      is_open?: boolean;
+    }
+    const msg = (frame.msg ?? {}) as Record<string, { actives?: Record<string, RawActive> }>;
     const result: Record<string, number> = {};
     for (const group of Object.values(msg)) {
       for (const [id, active] of Object.entries(group?.actives ?? {})) {
+        // The broker's catalog keeps long-suspended/delisted actives alongside
+        // tradeable ones. Skip anything explicitly marked closed so stale
+        // tickers (e.g. discontinued crypto crosses) never reach the asset list.
+        if (active?.enabled === false) continue;
+        if (active?.is_suspended === true) continue;
+        if (active?.is_open === false) continue;
+        if (BLOCKED_ACTIVE_NAMES.has((active?.name ?? "").replace(/^front\./, "").toUpperCase())) continue;
         const name = (active?.name ?? "").replace(/^front\./, "").toUpperCase();
         if (name && !result[name]) result[name] = Number(id);
       }

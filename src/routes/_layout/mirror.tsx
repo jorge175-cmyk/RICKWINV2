@@ -53,7 +53,7 @@ const CLOCK_FMT = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2
 
 function MirrorPage() {
   const [timeframe, setTimeframe] = useState("M1");
-  const [windowSize, setWindowSize] = useState(24);
+  const [windowSize, setWindowSize] = useState(40);
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [stored, setStored] = useState({ assets: 0, candles: 0 });
@@ -125,7 +125,9 @@ function MirrorPage() {
             assets: allAssets.slice(0, 600),
             offset,
             limit: CHUNK,
-            historyBlocks: 2,
+            // Máximo permitido pelo schema: o histórico mais profundo que a
+            // corretora entrega sem estourar a proteção contra excesso de acessos.
+            historyBlocks: 6,
             minCorrelation: 0.93,
             phase: stage,
           },
@@ -139,8 +141,7 @@ function MirrorPage() {
         }
         if (chunk.groups.length > 0) {
           // Repetições idênticas sempre no topo da lista.
-          const perfectScore = (g: MirrorAssetGroup) =>
-            g.matches.some((m) => m.similarity >= 99.9) ? 1 : 0;
+          const perfectScore = (g: MirrorAssetGroup) => (g.matches.some((m) => m.exact) ? 1 : 0);
           setGroups((prev) =>
             [...prev, ...chunk.groups].sort(
               (a, b) =>
@@ -346,7 +347,7 @@ function MirrorPage() {
         )}
 
         {(() => {
-          const perfect = groups.filter((g) => g.matches.some((m) => m.similarity >= 99.9));
+          const perfect = groups.filter((g) => g.matches.some((m) => m.exact));
           if (perfect.length === 0) return null;
           return (
             <Card className="border-2 border-primary bg-primary/10 shadow-lg shadow-primary/20">
@@ -357,7 +358,7 @@ function MirrorPage() {
               </CardHeader>
               <CardContent className="space-y-2">
                 {perfect.map((g) => {
-                  const m = g.matches.find((x) => x.similarity >= 99.9)!;
+                  const m = g.matches.find((x) => x.exact)!;
                   const plan = m.projection.slice(0, 5);
                   return (
                     <p key={g.liveAsset} className="text-sm">
@@ -383,7 +384,7 @@ function MirrorPage() {
         {groups.map((group) => {
           const verdict = verdicts[group.liveAsset];
           const loading = pendingVerdict === group.liveAsset;
-          const perfectMatch = group.matches.find((m) => m.similarity >= 99.9);
+          const perfectMatch = group.matches.find((m) => m.exact);
           const hasPerfect = perfectMatch != null;
           /** O plano de operações segue a repetição idêntica quando existe. */
           const planMatch = perfectMatch ?? group.matches[0];
