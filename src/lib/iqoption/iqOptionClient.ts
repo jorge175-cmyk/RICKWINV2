@@ -122,6 +122,8 @@ class IqOptionClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private nextReconnectAt = 0;
   private catalogueRefresh: Promise<void> | null = null;
+  private catalogueFromProvider = false;
+
 
   constructor() {
     if (typeof window === "undefined") return;
