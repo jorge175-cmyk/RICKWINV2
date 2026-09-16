@@ -460,12 +460,16 @@ class IqOptionClient {
         };
       });
     } catch (error) {
-      // No realtime channel available (e.g. local dev runtime) — consumers
-      // keep working through periodic history refreshes.
-      this.setStatus("polling", error instanceof Error ? error.message : "Streaming unavailable");
+      // No realtime channel available (e.g. local dev/preview runtime, which
+      // cannot answer a WebSocket upgrade) — consumers keep working through
+      // periodic history refreshes, and the UI says so explicitly instead of
+      // looking like a broker outage.
+      const reason = error instanceof Error ? error.message : "Streaming unavailable";
+      this.setStatus("polling", isPreviewRuntime() ? PREVIEW_STREAM_MESSAGE : reason);
       this.scheduleReconnect();
     }
   }
+
 
   private handleFrame(raw: unknown) {
     if (typeof raw !== "string") return;
