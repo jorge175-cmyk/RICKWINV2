@@ -97,7 +97,7 @@ function MirrorPage() {
       return;
     }
     cancelRef.current = false;
-    setStreamOn(true);
+    setFeed("ok");
     setGroups([]);
     setVerdicts({});
     setSkipped(0);
