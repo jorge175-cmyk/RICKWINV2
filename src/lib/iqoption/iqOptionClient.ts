@@ -31,7 +31,10 @@ type QuoteHandler = (quote: LiveQuote) => void;
 type StatusHandler = (status: StreamStatus, error?: string) => void;
 
 const PROXY_PATH = "/api/public/iqoption-ws";
-const ZOMBIE_TIMEOUT_MS = 45_000;
+// Quiet OTC assets can go a long while without a printable frame. The proxy
+// also sends its own keepalive, so anything under a minute produced false
+// "zombie" verdicts and constant channel churn.
+const ZOMBIE_TIMEOUT_MS = 120_000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const WATCHDOG_INTERVAL_MS = 5_000;
 // Batched fan-out for the full asset catalogue over the single channel.
