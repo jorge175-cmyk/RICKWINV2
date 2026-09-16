@@ -486,17 +486,8 @@ class IqOptionClient {
       }, HEARTBEAT_INTERVAL_MS);
     }
     if (this.watchdog) return;
-    this.watchdog = setInterval(() => {
-      if (!this.hasSubscriptions()) return;
-      // Never interfere with a handshake in flight or a scheduled retry:
-      // doing so aborted healthy connections and looped forever.
-      if (this.connecting || this.reconnectTimer) return;
-      if (this.socket?.readyState === WebSocket.CONNECTING) return;
-      const stale = Date.now() - this.lastFrameAt > ZOMBIE_TIMEOUT_MS;
-      if (stale || !this.socket || this.socket.readyState !== WebSocket.OPEN) {
-        this.hardReconnect();
-      }
-    }, WATCHDOG_INTERVAL_MS);
+    // Background check with a looser threshold; focus/network use tighter ones.
+    this.watchdog = setInterval(() => this.ensureFresh(ZOMBIE_TIMEOUT_MS), WATCHDOG_INTERVAL_MS);
   }
 
   private scheduleReconnect() {
