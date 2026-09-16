@@ -206,36 +206,32 @@ function MirrorPage() {
             <span className="font-display text-lg font-bold tracking-tight">Espelho OTC</span>
           </div>
           <div className="flex items-center gap-3">
-            {connectionStatus === "live" ? (
+            {feed === "ok" ? (
               <Badge
                 variant="outline"
                 className="gap-1.5 border-call/40 bg-call/10 text-call"
-                title="Recebendo dados ao vivo da corretora"
+                title="A corretora está entregando o histórico usado na varredura"
               >
                 <Wifi className="h-3.5 w-3.5" />
-                Conectado
+                Corretora respondendo
               </Badge>
-            ) : !streamOn ? (
+            ) : feed === "error" ? (
               <Badge
                 variant="outline"
-                className="gap-1.5 border-border/60 bg-muted/30 text-muted-foreground"
-                title="A conexão é aberta somente ao iniciar a varredura"
+                className="gap-1.5 border-put/40 bg-put/10 text-put"
+                title="A corretora recusou ou atrasou as buscas de histórico"
               >
                 <WifiOff className="h-3.5 w-3.5" />
-                Aguardando varredura
+                Corretora instável
               </Badge>
             ) : (
               <Badge
                 variant="outline"
-                className="gap-1.5 border-put/40 bg-put/10 text-put"
-                title={connectionError ?? "Sem canal ao vivo com a corretora"}
+                className="gap-1.5 border-border/60 bg-muted/30 text-muted-foreground"
+                title="O histórico é buscado quando a varredura começa"
               >
                 <WifiOff className="h-3.5 w-3.5" />
-                {connectionStatus === "connecting"
-                  ? "Conectando…"
-                  : connectionStatus === "polling"
-                    ? "Sem streaming"
-                    : "Desconectado"}
+                Aguardando varredura
               </Badge>
             )}
             <Button asChild variant="ghost" size="sm" className="gap-2 text-muted-foreground">
