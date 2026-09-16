@@ -65,6 +65,17 @@ export const Route = createFileRoute("/api/public/iqoption-ws")({
         server.accept?.();
 
         const pending: string[] = [];
+        // Frames can arrive from upstream before the browser side is OPEN.
+        // Without this queue the first frames are lost and the client stalls.
+        const pendingToClient: string[] = [];
+        const toClient = (data: string) => {
+          if (server.readyState === 1) {
+            for (const queued of pendingToClient.splice(0)) server.send(queued);
+            server.send(data);
+          } else {
+            pendingToClient.push(data);
+          }
+        };
         let upstreamReady = false;
         let closed = false;
         const authenticationTimer = setTimeout(() => closeBoth(), 20_000);
