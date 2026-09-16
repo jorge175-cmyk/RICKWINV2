@@ -58,7 +58,9 @@ function MirrorPage() {
   const [verdicts, setVerdicts] = useState<Record<string, MirrorVerdict>>({});
   const [pendingVerdict, setPendingVerdict] = useState<string | null>(null);
   const cancelRef = useRef(false);
-  const { status: connectionStatus, error: connectionError } = useIqOptionConnection();
+  /** O canal ao vivo só abre quando a varredura começa. */
+  const [streamOn, setStreamOn] = useState(false);
+  const { status: connectionStatus, error: connectionError } = useIqOptionConnection(streamOn);
 
   const { data: otcAssets = [] } = useQuery({
     queryKey: ["otcAssets"],
@@ -92,6 +94,7 @@ function MirrorPage() {
       return;
     }
     cancelRef.current = false;
+    setStreamOn(true);
     setGroups([]);
     setVerdicts({});
     setSkipped(0);
@@ -203,6 +206,15 @@ function MirrorPage() {
               >
                 <Wifi className="h-3.5 w-3.5" />
                 Conectado
+              </Badge>
+            ) : !streamOn ? (
+              <Badge
+                variant="outline"
+                className="gap-1.5 border-border/60 bg-muted/30 text-muted-foreground"
+                title="A conexão é aberta somente ao iniciar a varredura"
+              >
+                <WifiOff className="h-3.5 w-3.5" />
+                Aguardando varredura
               </Badge>
             ) : (
               <Badge

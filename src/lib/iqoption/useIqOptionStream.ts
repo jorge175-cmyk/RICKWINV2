@@ -45,11 +45,21 @@ export function useIqOptionStream(symbol: string | null | undefined, timeframe: 
  * Keeps one asset warm so the shared channel stays monitored and reconnects
  * on its own while the page is open.
  */
-export function useIqOptionConnection(warmAsset = "EUR/USD") {
-  const [status, setStatus] = useState<StreamStatus>(iqOptionClient.getStatus());
-  const [error, setError] = useState<string | undefined>(iqOptionClient.getError());
+export function useIqOptionConnection(enabled = true, warmAsset = "EUR/USD") {
+  const [status, setStatus] = useState<StreamStatus>(
+    enabled ? iqOptionClient.getStatus() : "idle",
+  );
+  const [error, setError] = useState<string | undefined>(
+    enabled ? iqOptionClient.getError() : undefined,
+  );
 
   useEffect(() => {
+    // Sem `enabled` nenhuma conexão é aberta: evita canais ociosos e bloqueios.
+    if (!enabled) {
+      setStatus("idle");
+      setError(undefined);
+      return;
+    }
     const asset = getIqOptionName(warmAsset);
     if (!asset) return;
     const keepWarm = candleStore.keepWarm(asset, timeframeSeconds("M1"));
@@ -61,7 +71,7 @@ export function useIqOptionConnection(warmAsset = "EUR/USD") {
       off();
       keepWarm();
     };
-  }, [warmAsset]);
+  }, [enabled, warmAsset]);
 
   return { status, error, connected: status === "live" };
 }
