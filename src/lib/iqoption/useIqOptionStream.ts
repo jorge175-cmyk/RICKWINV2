@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { candleStore, type CandleSnapshot } from "./candleStore";
 import { getIqOptionName, timeframeSeconds } from "./mapping";
+import { iqOptionClient, type StreamStatus } from "./iqOptionClient";
 
 const EMPTY: CandleSnapshot = {
   candles: [],
