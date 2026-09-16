@@ -10,8 +10,9 @@ import { MirrorMatchCard } from "@/components/trading/MirrorMatchCard";
 import { getOtcAssets } from "@/lib/iqoption/candles.functions";
 import { mirrorScanChunk, type MirrorAssetGroup } from "@/lib/analysis/mirror.functions";
 import { mirrorVerdict, type MirrorVerdict } from "@/lib/analysis/mirrorVerdict.functions";
+import { useIqOptionConnection } from "@/lib/iqoption/useIqOptionStream";
 import { toast } from "sonner";
-import { ArrowLeft, Copy, Loader2, Search, Sparkles, StopCircle } from "lucide-react";
+import { ArrowLeft, Copy, Loader2, Search, Sparkles, StopCircle, Wifi, WifiOff } from "lucide-react";
 
 const FALLBACK_ASSETS = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CHF", "USD/CAD"];
 const CHUNK = 10;
@@ -57,6 +58,7 @@ function MirrorPage() {
   const [verdicts, setVerdicts] = useState<Record<string, MirrorVerdict>>({});
   const [pendingVerdict, setPendingVerdict] = useState<string | null>(null);
   const cancelRef = useRef(false);
+  const { status: connectionStatus, error: connectionError } = useIqOptionConnection();
 
   const { data: otcAssets = [] } = useQuery({
     queryKey: ["otcAssets"],
