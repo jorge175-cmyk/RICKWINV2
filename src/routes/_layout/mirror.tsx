@@ -98,10 +98,15 @@ function MirrorPage() {
     }
     cancelRef.current = false;
     setFeed("ok");
+    // Cada varredura começa do zero: nada da anterior fica na tela.
     setGroups([]);
     setVerdicts({});
+    setPendingVerdict(null);
     setSkipped(0);
+    setStored({ assets: 0, candles: 0 });
+    setProgress({ done: 0, total: allAssets.length });
     let skippedTotal = 0;
+
 
     for (const stage of ["collect", "match"] as const) {
       setPhase(stage);
