@@ -417,7 +417,7 @@ class IqOptionClient {
 
   /** Immediate recovery: used by the watchdog and on tab focus / network back. */
   hardReconnect(force = false) {
-    if (!force && Date.now() < this.nextReconnectAt) return;
+    if (!force && (this.connecting || Date.now() < this.nextReconnectAt)) return;
     if (force) {
       this.nextReconnectAt = 0;
       this.reconnectAttempts = 0;
