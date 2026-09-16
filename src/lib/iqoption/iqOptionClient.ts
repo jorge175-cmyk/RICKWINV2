@@ -34,7 +34,7 @@ const PROXY_PATH = "/api/public/iqoption-ws";
 // Quiet OTC assets can go a long while without a printable frame. The proxy
 // also sends its own keepalive, so anything under a minute produced false
 // "zombie" verdicts and constant channel churn.
-const ZOMBIE_TIMEOUT_MS = 120_000;
+
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const WATCHDOG_INTERVAL_MS = 5_000;
 // Batched fan-out for the full asset catalogue over the single channel.
@@ -381,12 +381,7 @@ class IqOptionClient {
                 this.lastFrameAt = Date.now();
                 this.reconnectAttempts = 0;
                 this.setStatus("live");
-                for (const { asset, sizeSeconds } of this.subscriptions.values()) {
-                  this.sendCandleSubscribe(asset, sizeSeconds);
-                }
-                for (const { asset } of this.quoteSubscriptions.values()) {
-                  this.sendQuoteSubscribe(asset);
-                }
+                this.resubscribeAll();
                 this.startWatchdog();
                 resolve();
               }
@@ -487,7 +482,7 @@ class IqOptionClient {
     }
     if (this.watchdog) return;
     // Background check with a looser threshold; focus/network use tighter ones.
-    this.watchdog = setInterval(() => this.ensureFresh(ZOMBIE_TIMEOUT_MS), WATCHDOG_INTERVAL_MS);
+    this.watchdog = setInterval(() => this.ensureFresh(FRESH_BACKGROUND_MS), WATCHDOG_INTERVAL_MS);
   }
 
   private scheduleReconnect() {
