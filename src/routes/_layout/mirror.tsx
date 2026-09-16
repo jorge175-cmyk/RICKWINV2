@@ -216,6 +216,15 @@ function MirrorPage() {
                 <WifiOff className="h-3.5 w-3.5" />
                 Aguardando varredura
               </Badge>
+            ) : connectionStatus === "polling" && isPreviewRuntime() ? (
+              <Badge
+                variant="outline"
+                className="gap-1.5 border-amber-400/40 bg-amber-400/10 text-amber-300"
+                title={PREVIEW_STREAM_MESSAGE}
+              >
+                <WifiOff className="h-3.5 w-3.5" />
+                Preview — histórico
+              </Badge>
             ) : (
               <Badge
                 variant="outline"
@@ -230,6 +239,7 @@ function MirrorPage() {
                     : "Desconectado"}
               </Badge>
             )}
+
             <Button asChild variant="ghost" size="sm" className="gap-2 text-muted-foreground">
               <Link to="/">
                 <ArrowLeft className="h-4 w-4" />
