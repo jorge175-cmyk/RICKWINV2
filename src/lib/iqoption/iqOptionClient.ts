@@ -323,14 +323,16 @@ class IqOptionClient {
   }
 
   private applyCatalogue(map: Record<string, number>) {
-    if (Object.keys(map).length === 0) return false;
-    this.activeIds = map;
+    // Live catalogue wins; the embedded fallback fills whatever is missing.
+    const merged = { ...FALLBACK_ACTIVES, ...map };
+    this.activeIds = merged;
     this.idToName.clear();
-    for (const [name, id] of Object.entries(map)) {
+    for (const [name, id] of Object.entries(merged)) {
       if (!this.idToName.has(id)) this.idToName.set(id, name);
     }
-    return true;
+    return Object.keys(map).length > 0;
   }
+
 
   /** Re-sends every subscription; used after reconnects and catalogue refreshes. */
   private resubscribeAll() {
