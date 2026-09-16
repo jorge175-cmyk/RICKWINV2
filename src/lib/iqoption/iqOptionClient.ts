@@ -294,6 +294,58 @@ class IqOptionClient {
     return this.connecting;
   }
 
+  private applyCatalogue(map: Record<string, number>) {
+    if (Object.keys(map).length === 0) return false;
+    this.activeIds = map;
+    this.idToName.clear();
+    for (const [name, id] of Object.entries(map)) {
+      if (!this.idToName.has(id)) this.idToName.set(id, name);
+    }
+    return true;
+  }
+
+  /** Re-sends every subscription; used after reconnects and catalogue refreshes. */
+  private resubscribeAll() {
+    for (const { asset, sizeSeconds } of this.subscriptions.values()) {
+      this.sendCandleSubscribe(asset, sizeSeconds);
+    }
+    for (const { asset } of this.quoteSubscriptions.values()) this.sendQuoteSubscribe(asset);
+  }
+
+  /**
+   * Tolerant catalogue load: waits a short moment for the provider, otherwise
+   * falls back to the last known map so a slow answer never becomes an error
+   * loop. The refresh keeps running and re-subscribes when it lands.
+   */
+  private async ensureCatalogue(): Promise<void> {
+    if (this.activeIds && Object.keys(this.activeIds).length > 0) return;
+
+    if (!this.catalogueRefresh) {
+      this.catalogueRefresh = getActiveIds()
+        .then((map) => {
+          if (this.applyCatalogue(map)) {
+            writeCachedActiveIds(map);
+            if (this.socket?.readyState === WebSocket.OPEN) this.resubscribeAll();
+          }
+        })
+        .catch(() => {
+          /* handled by the fallback below */
+        })
+        .finally(() => {
+          this.catalogueRefresh = null;
+        });
+    }
+
+    await Promise.race([
+      this.catalogueRefresh,
+      new Promise<void>((resolve) => setTimeout(resolve, CATALOGUE_WAIT_MS)),
+    ]);
+
+    if (this.activeIds && Object.keys(this.activeIds).length > 0) return;
+    const cached = readCachedActiveIds();
+    if (cached) this.applyCatalogue(cached);
+  }
+
   private async connect(): Promise<void> {
     this.setStatus("connecting");
     try {
