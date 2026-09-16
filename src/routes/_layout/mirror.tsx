@@ -55,7 +55,8 @@ function MirrorPage() {
   const [windowSize, setWindowSize] = useState(24);
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState({ done: 0, total: 0 });
-  const [stored, setStored] = useState({ assets: 0, candles: 0 });
+  /** `null` = o primeiro lote de histórico ainda não voltou do servidor. */
+  const [stored, setStored] = useState<{ assets: number; candles: number } | null>(null);
   const [skipped, setSkipped] = useState(0);
   const [groups, setGroups] = useState<MirrorAssetGroup[]>([]);
   const [verdicts, setVerdicts] = useState<Record<string, MirrorVerdict>>({});
