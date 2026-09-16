@@ -58,7 +58,9 @@ function MirrorPage() {
   const [verdicts, setVerdicts] = useState<Record<string, MirrorVerdict>>({});
   const [pendingVerdict, setPendingVerdict] = useState<string | null>(null);
   const cancelRef = useRef(false);
-  const { status: connectionStatus, error: connectionError } = useIqOptionConnection();
+  /** O canal ao vivo só abre quando a varredura começa. */
+  const [streamOn, setStreamOn] = useState(false);
+  const { status: connectionStatus, error: connectionError } = useIqOptionConnection(streamOn);
 
   const { data: otcAssets = [] } = useQuery({
     queryKey: ["otcAssets"],
