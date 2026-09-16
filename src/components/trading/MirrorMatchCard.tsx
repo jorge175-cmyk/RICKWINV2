@@ -28,10 +28,19 @@ export function MirrorMatchCard({ match, liveWindow }: MirrorMatchCardProps) {
   const reverseTime = match.transform === "TIME_REVERSED" || match.transform === "BOTH";
   const invertPrice = match.transform === "PRICE_INVERTED" || match.transform === "BOTH";
   const projection = match.projection ?? [];
+  /** Repetição praticamente idêntica: merece destaque visual forte. */
+  const isPerfect = match.similarity >= 99.9;
 
   return (
-    <Card className="border-border/50 bg-surface/40">
+    <Card
+      className={
+        isPerfect
+          ? "border-2 border-primary bg-primary/5 shadow-lg shadow-primary/20"
+          : "border-border/50 bg-surface/40"
+      }
+    >
       <CardContent className="space-y-3 p-4">
+
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="space-y-1">
             <p className="font-display text-sm font-semibold text-foreground">{match.asset}</p>
