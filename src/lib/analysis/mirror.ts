@@ -35,6 +35,13 @@ export interface MirrorMatch {
   correlation: number;
   /** Semelhança em porcentagem, arredondada. */
   similarity: number;
+  /**
+   * Desvio máximo, vela por vela (corpo, pavios e fechamento), em fração do
+   * tamanho típico da vela ao vivo. 0 = replay perfeito.
+   */
+  maxDeviation: number;
+  /** true quando o trecho é um replay praticamente exato (não só parecido). */
+  exact: boolean;
   /** Início e fim (epoch segundos) do trecho histórico encontrado. */
   startTime: number;
   endTime: number;
@@ -66,7 +73,82 @@ export interface MirrorSearchOptions {
   projectionSteps?: number;
   /** Duração da vela em segundos, para datar as velas projetadas. */
   stepSeconds?: number;
+  /**
+   * Só aceita replay exato: cada vela do trecho histórico tem de reproduzir a
+   * vela ao vivo (corpo, máximo, mínimo e fechamento). Padrão: true.
+   */
+  exactOnly?: boolean;
+  /**
+   * Desvio máximo tolerado por vela, em fração do tamanho típico da vela ao
+   * vivo. 0.03 = até 3% de diferença — ainda lido como a mesma vela.
+   */
+  exactTolerance?: number;
 }
+
+/**
+ * Perfil da vela normalizado pelo próprio preço de abertura: descreve a forma
+ * (corpo e pavios) sem depender do nível de preço do ativo, o que permite
+ * reconhecer o mesmo desenho em ativos e datas diferentes.
+ */
+function candleShape(c: MirrorCandle): [number, number, number] {
+  const base = c.open > 0 ? c.open : 1;
+  return [(c.high - base) / base, (c.low - base) / base, (c.close - base) / base];
+}
+
+/** A mesma vela lida de trás pra frente: abertura e fechamento trocam de papel. */
+function reverseCandle(c: MirrorCandle): MirrorCandle {
+  return { ...c, open: c.close, close: c.open };
+}
+
+/** A mesma vela refletida no eixo de preço: máximo e mínimo trocam de papel. */
+function invertCandle(c: MirrorCandle, pivot: number): MirrorCandle {
+  return {
+    ...c,
+    open: 2 * pivot - c.open,
+    close: 2 * pivot - c.close,
+    high: 2 * pivot - c.low,
+    low: 2 * pivot - c.high,
+  };
+}
+
+/**
+ * Compara vela por vela o trecho histórico (já na leitura escolhida) com a
+ * janela ao vivo e devolve o maior desvio encontrado, em fração do tamanho
+ * típico da vela ao vivo. Valores próximos de 0 significam replay exato.
+ */
+function replayDeviation(
+  live: MirrorCandle[],
+  window: MirrorCandle[],
+  transform: MirrorTransform,
+): number {
+  if (live.length !== window.length || live.length === 0) return Number.POSITIVE_INFINITY;
+
+  const readsBackwards = transform === "TIME_REVERSED" || transform === "BOTH";
+  const invertsPrice = transform === "PRICE_INVERTED" || transform === "BOTH";
+  let seq = readsBackwards ? [...window].reverse().map(reverseCandle) : [...window];
+  if (invertsPrice) {
+    const pivot = seq[0]!.open > 0 ? seq[0]!.open : 1;
+    seq = seq.map((c) => invertCandle(c, pivot));
+  }
+
+  // Tamanho típico da vela ao vivo: escala de referência para o desvio.
+  let amplitude = 0;
+  for (const c of live) amplitude += c.open > 0 ? (c.high - c.low) / c.open : 0;
+  amplitude = amplitude / live.length;
+  if (!(amplitude > 0)) return Number.POSITIVE_INFINITY;
+
+  let worst = 0;
+  for (let i = 0; i < live.length; i++) {
+    const a = candleShape(live[i]!);
+    const b = candleShape(seq[i]!);
+    for (let j = 0; j < 3; j++) {
+      const diff = Math.abs(a[j]! - b[j]!) / amplitude;
+      if (diff > worst) worst = diff;
+    }
+  }
+  return worst;
+}
+
 
 
 const TRANSFORMS: MirrorTransform[] = ["DIRECT", "TIME_REVERSED", "PRICE_INVERTED", "BOTH"];
