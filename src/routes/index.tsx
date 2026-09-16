@@ -118,10 +118,10 @@ function AuthHeaderButtons() {
     return (
       <div className="flex items-center gap-3">
         <Link
-          to="/trading"
+          to="/mirror"
           className="hidden text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground sm:inline-flex"
         >
-          Trading
+          Mirror OTC
         </Link>
         <Button
           variant="ghost"
@@ -134,10 +134,10 @@ function AuthHeaderButtons() {
           <LogOut className="mr-1 h-4 w-4" /> Log out
         </Button>
         <Link
-          to="/trading"
+          to="/mirror"
           className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/20 transition-all hover:bg-primary/90 hover:shadow-primary/30"
         >
-          Open trading
+          Open analysis
           <ArrowRight className="h-4 w-4" />
         </Link>
       </div>
