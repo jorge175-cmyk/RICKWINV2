@@ -338,11 +338,29 @@ function MirrorPage() {
         {groups.map((group) => {
           const verdict = verdicts[group.liveAsset];
           const loading = pendingVerdict === group.liveAsset;
+          const best = group.matches[0];
+          const hasPerfect = group.matches.some((m) => m.similarity >= 99.9);
+          const nextStep = best?.projection?.[0];
           return (
             <section key={group.liveAsset} className="space-y-3">
-              <div className="flex flex-wrap items-center gap-3">
-                <h2 className="font-display text-lg font-bold">{group.liveAsset}</h2>
+              <div
+                className={`flex flex-wrap items-center gap-3 rounded-xl border p-4 ${
+                  hasPerfect
+                    ? "border-2 border-primary bg-primary/10 shadow-lg shadow-primary/20"
+                    : "border-border/50 bg-surface/40"
+                }`}
+              >
+                <div className="space-y-0.5">
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Entrar neste ativo
+                  </p>
+                  <h2 className="font-display text-2xl font-bold text-foreground">{group.liveAsset}</h2>
+                </div>
+                {hasPerfect && (
+                  <Badge className="bg-primary text-primary-foreground">Repetição 100% idêntica</Badge>
+                )}
                 <Badge variant="secondary">{group.matches.length} coincidência(s)</Badge>
+                <Badge variant="secondary">{timeframe}</Badge>
                 {group.consensus.direction && (
                   <Badge
                     variant="outline"
@@ -352,7 +370,18 @@ function MirrorPage() {
                     {group.consensus.agreement}%)
                   </Badge>
                 )}
+                {nextStep && (
+                  <span
+                    className={`font-display text-sm font-bold ${nextStep.direction === "CALL" ? "text-call" : "text-put"}`}
+                  >
+                    Próxima vela {nextStep.direction === "CALL" ? "COMPRA" : "VENDA"} ·{" "}
+                    {new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" }).format(
+                      new Date(nextStep.time * 1000),
+                    )}
+                  </span>
+                )}
               </div>
+
 
               <div className="grid gap-4">
                 {group.matches.map((match) => (
