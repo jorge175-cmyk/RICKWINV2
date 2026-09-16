@@ -207,6 +207,15 @@ function MirrorPage() {
                 <Wifi className="h-3.5 w-3.5" />
                 Conectado
               </Badge>
+            ) : !streamOn ? (
+              <Badge
+                variant="outline"
+                className="gap-1.5 border-border/60 bg-muted/30 text-muted-foreground"
+                title="A conexão é aberta somente ao iniciar a varredura"
+              >
+                <WifiOff className="h-3.5 w-3.5" />
+                Aguardando varredura
+              </Badge>
             ) : (
               <Badge
                 variant="outline"
