@@ -442,6 +442,7 @@ class IqOptionClient {
         };
         socket.onerror = () => {
           clearTimeout(timer);
+          if (this.socket === socket) this.setStatus("connecting", "Canal interrompido; retomando…");
           reject(new Error("Streaming connection failed"));
         };
         socket.onclose = () => {
@@ -449,7 +450,12 @@ class IqOptionClient {
           if (!proxyReady) reject(new Error("Streaming closed before authentication"));
           if (this.socket === socket) {
             this.socket = null;
-            if (this.hasSubscriptions()) this.scheduleReconnect();
+            if (this.hasSubscriptions()) {
+              this.setStatus("connecting", "Canal interrompido; retomando…");
+              this.scheduleReconnect();
+            } else {
+              this.setStatus("idle");
+            }
           }
         };
       });
@@ -577,7 +583,10 @@ class IqOptionClient {
       /* noop */
     }
     this.socket = null;
-    if (this.hasSubscriptions()) void this.ensureConnected();
+    if (this.hasSubscriptions()) {
+      this.setStatus("connecting", "Restabelecendo canal ao vivo…");
+      void this.ensureConnected();
+    }
   }
 
   disconnect() {
