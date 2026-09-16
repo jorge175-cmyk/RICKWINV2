@@ -297,18 +297,7 @@ class IqOptionClient {
   private async connect(): Promise<void> {
     this.setStatus("connecting");
     try {
-      if (!this.activeIds || Object.keys(this.activeIds).length === 0) {
-        const activeIds = await getActiveIds();
-        if (Object.keys(activeIds).length === 0) {
-          this.activeIds = null;
-          throw new Error("IQ Option asset list temporarily unavailable");
-        }
-        this.activeIds = activeIds;
-        this.idToName.clear();
-        for (const [name, id] of Object.entries(this.activeIds)) {
-          if (!this.idToName.has(id)) this.idToName.set(id, name);
-        }
-      }
+      await this.ensureCatalogue();
 
       const { data } = await supabase.auth.getSession();
       const token = data.session?.access_token;
