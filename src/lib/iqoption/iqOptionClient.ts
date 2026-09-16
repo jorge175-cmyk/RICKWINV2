@@ -52,7 +52,35 @@ const CATALOGUE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const FRESH_ON_FOCUS_MS = 20_000;
 const FRESH_BACKGROUND_MS = 60_000;
 
+// Embedded fallback catalogue: if the provider's initialization data is slow or
+// incomplete, the channel still becomes usable instead of looping on errors.
+const FALLBACK_ACTIVES: Record<string, number> = {
+  EURUSD: 1,
+  EURGBP: 2,
+  EURJPY: 4,
+  GBPUSD: 5,
+  USDJPY: 6,
+  NZDUSD: 8,
+  AUDUSD: 99,
+  USDCAD: 100,
+  EURCAD: 105,
+  "EURUSD-OTC": 76,
+  "EURGBP-OTC": 77,
+  "EURJPY-OTC": 79,
+  "GBPUSD-OTC": 81,
+  "USDJPY-OTC": 85,
+  "AUDCAD-OTC": 86,
+  "AUDUSD-OTC": 2111,
+  "AUDJPY-OTC": 2113,
+  "EURCAD-OTC": 2117,
+  "CADCHF-OTC": 2119,
+  "BTCUSD-OP": 1916,
+  "ETHUSD-OP": 1918,
+  "ETHUSD-OTC": 1941,
+};
+
 function readCachedActiveIds(): Record<string, number> | null {
+
   if (typeof window === "undefined") return null;
   try {
     const raw = window.localStorage.getItem(CATALOGUE_CACHE_KEY);
@@ -94,6 +122,8 @@ class IqOptionClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private nextReconnectAt = 0;
   private catalogueRefresh: Promise<void> | null = null;
+  private catalogueFromProvider = false;
+
 
   constructor() {
     if (typeof window === "undefined") return;
@@ -295,14 +325,16 @@ class IqOptionClient {
   }
 
   private applyCatalogue(map: Record<string, number>) {
-    if (Object.keys(map).length === 0) return false;
-    this.activeIds = map;
+    // Live catalogue wins; the embedded fallback fills whatever is missing.
+    const merged = { ...FALLBACK_ACTIVES, ...map };
+    this.activeIds = merged;
     this.idToName.clear();
-    for (const [name, id] of Object.entries(map)) {
+    for (const [name, id] of Object.entries(merged)) {
       if (!this.idToName.has(id)) this.idToName.set(id, name);
     }
-    return true;
+    return Object.keys(map).length > 0;
   }
+
 
   /** Re-sends every subscription; used after reconnects and catalogue refreshes. */
   private resubscribeAll() {
@@ -314,16 +346,18 @@ class IqOptionClient {
 
   /**
    * Tolerant catalogue load: waits a short moment for the provider, otherwise
-   * falls back to the last known map so a slow answer never becomes an error
-   * loop. The refresh keeps running and re-subscribes when it lands.
+   * falls back to the cached map and finally to the embedded one, so a slow
+   * answer never becomes an error loop. The refresh keeps running and
+   * re-subscribes when it lands.
    */
   private async ensureCatalogue(): Promise<void> {
-    if (this.activeIds && Object.keys(this.activeIds).length > 0) return;
+    if (this.catalogueFromProvider) return;
 
     if (!this.catalogueRefresh) {
       this.catalogueRefresh = getActiveIds()
         .then((map) => {
           if (this.applyCatalogue(map)) {
+            this.catalogueFromProvider = true;
             writeCachedActiveIds(map);
             if (this.socket?.readyState === WebSocket.OPEN) this.resubscribeAll();
           }
@@ -341,10 +375,12 @@ class IqOptionClient {
       new Promise<void>((resolve) => setTimeout(resolve, CATALOGUE_WAIT_MS)),
     ]);
 
-    if (this.activeIds && Object.keys(this.activeIds).length > 0) return;
+    if (this.catalogueFromProvider) return;
     const cached = readCachedActiveIds();
-    if (cached) this.applyCatalogue(cached);
+    this.applyCatalogue(cached ?? {});
   }
+
+
 
   private async connect(): Promise<void> {
     this.setStatus("connecting");
@@ -456,6 +492,20 @@ class IqOptionClient {
     const candle = msg as Record<string, number>;
     const asset = this.idToName.get(Number(candle["active_id"]));
     if (!asset) return;
+
+    // Clock refinement from the provider timestamp (ns in `at`, s in `to`),
+    // smoothed so network latency doesn't make bucket math jump around.
+    const atMs = candle["at"]
+      ? Math.floor(Number(candle["at"]) / 1_000_000)
+      : candle["to"]
+        ? Number(candle["to"]) * 1000
+        : 0;
+    if (Number.isFinite(atMs) && atMs > 0) {
+      const offset = atMs - Date.now();
+      this.serverTimeOffsetMs =
+        this.serverTimeOffsetMs === 0 ? offset : this.serverTimeOffsetMs * 0.9 + offset * 0.1;
+    }
+
 
     for (const handler of [...this.tickHandlers]) {
       handler({
