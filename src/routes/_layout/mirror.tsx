@@ -231,9 +231,9 @@ function MirrorPage() {
               </Badge>
             )}
             <Button asChild variant="ghost" size="sm" className="gap-2 text-muted-foreground">
-              <Link to="/trading">
+              <Link to="/">
                 <ArrowLeft className="h-4 w-4" />
-                <span className="hidden sm:inline">Análises</span>
+                <span className="hidden sm:inline">Início</span>
               </Link>
             </Button>
           </div>
