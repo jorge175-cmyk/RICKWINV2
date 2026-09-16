@@ -17,7 +17,8 @@ import { toast } from "sonner";
 import { ArrowLeft, Copy, Loader2, Search, Sparkles, StopCircle, Wifi, WifiOff } from "lucide-react";
 
 const FALLBACK_ASSETS = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CHF", "USD/CAD"];
-const CHUNK = 10;
+/** Lotes pequenos: os contadores da tela atualizam a cada poucos segundos. */
+const CHUNK = 4;
 
 export const Route = createFileRoute("/_layout/mirror")({
   component: MirrorPage,
