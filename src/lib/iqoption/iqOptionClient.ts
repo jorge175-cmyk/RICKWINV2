@@ -392,6 +392,10 @@ class IqOptionClient {
     if (this.watchdog) return;
     this.watchdog = setInterval(() => {
       if (!this.hasSubscriptions()) return;
+      // Never interfere with a handshake in flight or a scheduled retry:
+      // doing so aborted healthy connections and looped forever.
+      if (this.connecting || this.reconnectTimer) return;
+      if (this.socket?.readyState === WebSocket.CONNECTING) return;
       const stale = Date.now() - this.lastFrameAt > ZOMBIE_TIMEOUT_MS;
       if (stale || !this.socket || this.socket.readyState !== WebSocket.OPEN) {
         this.hardReconnect();
