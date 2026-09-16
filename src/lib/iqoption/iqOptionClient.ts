@@ -344,16 +344,18 @@ class IqOptionClient {
 
   /**
    * Tolerant catalogue load: waits a short moment for the provider, otherwise
-   * falls back to the last known map so a slow answer never becomes an error
-   * loop. The refresh keeps running and re-subscribes when it lands.
+   * falls back to the cached map and finally to the embedded one, so a slow
+   * answer never becomes an error loop. The refresh keeps running and
+   * re-subscribes when it lands.
    */
   private async ensureCatalogue(): Promise<void> {
-    if (this.activeIds && Object.keys(this.activeIds).length > 0) return;
+    if (this.catalogueFromProvider) return;
 
     if (!this.catalogueRefresh) {
       this.catalogueRefresh = getActiveIds()
         .then((map) => {
           if (this.applyCatalogue(map)) {
+            this.catalogueFromProvider = true;
             writeCachedActiveIds(map);
             if (this.socket?.readyState === WebSocket.OPEN) this.resubscribeAll();
           }
@@ -371,10 +373,12 @@ class IqOptionClient {
       new Promise<void>((resolve) => setTimeout(resolve, CATALOGUE_WAIT_MS)),
     ]);
 
-    if (this.activeIds && Object.keys(this.activeIds).length > 0) return;
+    if (this.catalogueFromProvider) return;
     const cached = readCachedActiveIds();
-    if (cached) this.applyCatalogue(cached);
+    this.applyCatalogue(cached ?? {});
   }
+
+
 
   private async connect(): Promise<void> {
     this.setStatus("connecting");
