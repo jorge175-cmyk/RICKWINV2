@@ -321,8 +321,19 @@ function MirrorPage() {
               <span>
                 {progress.done} de {progress.total} ativos
               </span>
-              <Badge variant="secondary">{stored.assets} ativos com histórico</Badge>
-              <Badge variant="secondary">{stored.candles.toLocaleString("pt-BR")} velas na memória</Badge>
+              {stored ? (
+                <>
+                  <Badge variant="secondary">{stored.assets} ativos com histórico</Badge>
+                  <Badge variant="secondary">
+                    {stored.candles.toLocaleString("pt-BR")} velas na memória
+                  </Badge>
+                </>
+              ) : (
+                <Badge variant="secondary" className="gap-1.5">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Baixando o primeiro lote de histórico…
+                </Badge>
+              )}
               {skipped > 0 && <span>{skipped} ativo(s) sem histórico suficiente</span>}
             </div>
             <Progress value={pct} className="h-1.5" />
