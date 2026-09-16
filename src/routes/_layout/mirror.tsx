@@ -134,12 +134,18 @@ function MirrorPage() {
           setSkipped(skippedTotal);
         }
         if (chunk.groups.length > 0) {
+          // Repetições idênticas sempre no topo da lista.
+          const perfectScore = (g: MirrorAssetGroup) =>
+            g.matches.some((m) => m.similarity >= 99.9) ? 1 : 0;
           setGroups((prev) =>
             [...prev, ...chunk.groups].sort(
-              (a, b) => (b.matches[0]?.correlation ?? 0) - (a.matches[0]?.correlation ?? 0),
+              (a, b) =>
+                perfectScore(b) - perfectScore(a) ||
+                (b.matches[0]?.correlation ?? 0) - (a.matches[0]?.correlation ?? 0),
             ),
           );
         }
+
         if (chunk.error) {
           setFeed("error");
           toast.error(chunk.error);
