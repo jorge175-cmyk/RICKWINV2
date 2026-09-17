@@ -2,7 +2,6 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { getIqOptionName, timeframeSeconds } from "@/lib/iqoption/mapping";
-import { getStoredCandles, saveCandles } from "@/lib/iqoption/candleHistory.server";
 import {
   buildSeriesIndex,
   consensusOf,
@@ -25,48 +24,27 @@ function sleep(ms: number) {
 }
 
 /**
- * Histórico de um ativo: parte do que já está salvo no banco (instantâneo) e
- * só busca na corretora as velas mais novas que ainda não foram vistas.
- * Na primeira vez que um ativo é varrido (nada salvo ainda), faz o backfill
- * completo voltando no tempo, como antes — e persiste tudo para a próxima.
+ * Baixa o histórico completo de um ativo sempre fresco na corretora (sem
+ * cache em banco): volta no tempo em blocos até `blocks` ou até a corretora
+ * não ter mais velas para entregar.
  */
 async function loadHistory(
   fetchCandles: (name: string, size: number, count: number, to?: number) => Promise<MirrorCandle[]>,
   iqName: string,
-  timeframeLabel: string,
   sizeSeconds: number,
   blocks: number,
 ): Promise<MirrorCandle[]> {
-  const stored = await getStoredCandles(iqName, timeframeLabel);
-  const newestStoredTime = stored.length > 0 ? stored[stored.length - 1]!.time : null;
-
   const byTime = new Map<number, MirrorCandle>();
-  for (const c of stored) byTime.set(c.time, c);
-
-  const fresh: MirrorCandle[] = [];
   let to = Math.floor(Date.now() / 1000);
   for (let i = 0; i < blocks; i++) {
     const chunk = await fetchCandles(iqName, sizeSeconds, BLOCK_SIZE, i === 0 ? undefined : to);
     if (chunk.length === 0) break;
-    for (const c of chunk) {
-      if (!byTime.has(c.time)) fresh.push(c);
-      byTime.set(c.time, c);
-    }
+    for (const c of chunk) byTime.set(c.time, c);
     const oldest = chunk[0]!.time;
-    // Bloco já alcançou o que estava salvo: o resto do histórico é conhecido.
-    if (newestStoredTime != null && oldest <= newestStoredTime) break;
     if (oldest >= to) break;
     to = oldest - sizeSeconds;
     // Espaçamento entre requisições: evita bloqueio por excesso de acessos.
     await sleep(250);
-  }
-
-  if (fresh.length > 0) {
-    await saveCandles(
-      iqName,
-      timeframeLabel,
-      fresh.map((c) => ({ ...c, volume: c.volume ?? 0 })),
-    );
   }
   return [...byTime.values()].sort((a, b) => a.time - b.time);
 }
@@ -79,8 +57,8 @@ interface StoredSeries {
 }
 
 /**
- * Histórico já baixado, reaproveitado entre as etapas da varredura global.
- * Vive no processo do servidor; se for perdido, a etapa de coleta refaz.
+ * Histórico já baixado nesta varredura (ou numa muito recente). Vive só no
+ * processo do servidor — nada é persistido em banco.
  */
 const historyStore = new Map<string, Map<string, StoredSeries>>();
 
@@ -117,18 +95,11 @@ const chunkSchema = z.object({
   assets: z.array(z.string()).min(1).max(600),
   offset: z.number().int().min(0).default(0),
   limit: z.number().int().min(1).max(24).default(10),
-  // Cada bloco fica mais barato pois blocos antigos ficam em cache de longa
-  // duração (ver fetchCandles). loadHistory já para sozinho quando a
-  // corretora não tem mais velas para entregar, então um teto alto aqui só
-  // significa "puxe o máximo que a corretora tiver", sem excesso de requisições
-  // para ativos com histórico mais curto.
+  // loadHistory já para sozinho quando a corretora não tem mais velas para
+  // entregar, então um teto alto aqui só significa "puxe o máximo que a
+  // corretora tiver" para os ativos que realmente têm esse histórico.
   historyBlocks: z.number().int().min(1).max(20).default(6),
   minCorrelation: z.number().min(0.7).max(0.999).default(0.93),
-  /**
-   * "collect" baixa o histórico deste trecho do catálogo.
-   * "match" cruza o trecho atual destes ativos contra TODO o histórico coletado.
-   */
-  phase: z.enum(["collect", "match"]),
 });
 
 export interface MirrorAssetGroup {
@@ -139,7 +110,6 @@ export interface MirrorAssetGroup {
 }
 
 export interface MirrorChunkResult {
-  phase: "collect" | "match";
   groups: MirrorAssetGroup[];
   /** Ativos processados nesta chamada. */
   processed: number;
@@ -153,9 +123,13 @@ export interface MirrorChunkResult {
 }
 
 /**
- * Uma etapa da varredura global. O navegador chama em sequência até cobrir todo
- * o catálogo: primeiro coletando o histórico de todos os ativos, depois cruzando
- * cada ativo ao vivo contra o histórico de todos os outros.
+ * Um lote da varredura global. O navegador chama em sequência até cobrir todo
+ * o catálogo. Cada ativo do lote é baixado e imediatamente cruzado contra
+ * tudo que já foi baixado até agora nesta varredura (ele entra no acervo em
+ * seguida, para os próximos ativos também poderem ser comparados com ele) —
+ * assim o resultado aparece durante a varredura, com a janela ao vivo sempre
+ * relativa ao instante em que aquele ativo foi processado, não ao início da
+ * varredura inteira.
  */
 export const mirrorScanChunk = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -173,7 +147,6 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
     };
 
     const base: MirrorChunkResult = {
-      phase: data.phase,
       groups: [],
       processed: 0,
       storedAssets: store.size,
@@ -192,95 +165,59 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
     if (batch.length === 0) return { ...base, nextOffset: null };
 
     try {
-      if (data.phase === "collect") {
-        const skipped: string[] = [];
-        let processed = 0;
-        for (const { iqName, label } of batch) {
-          const existing = store.get(iqName);
-          if (existing && existing.at > Date.now() - STORE_TTL_MS) {
-            processed++;
-            continue;
-          }
-          try {
-            const history = await loadHistory(fetchCandles, iqName, data.timeframe, size, data.historyBlocks);
-            if (history.length < data.windowSize + 6) {
-              skipped.push(label);
-              continue;
-            }
-            store.set(iqName, { label, history, index: buildSeriesIndex(history), at: Date.now() });
-            processed++;
-          } catch (error) {
-            if (error instanceof IqOptionBackoffError) throw error;
-            skipped.push(label);
-          }
-          await sleep(120);
-        }
-        return {
-          ...base,
-          processed,
-          storedAssets: store.size,
-          storedCandles: countCandles(),
-          skippedAssets: skipped,
-          nextOffset,
-        };
-      }
-
-      // ---- fase de cruzamento: uma requisição leve por ativo para atualizar
-      // a janela ao vivo (a coleta pode ter rodado minutos atrás; sem isso as
-      // próximas velas projetadas ficariam datadas de quando a coleta rodou,
-      // não de agora) ----
       const groups: MirrorAssetGroup[] = [];
       const skipped: string[] = [];
       let processed = 0;
 
-      for (const { iqName } of batch) {
-        const live = store.get(iqName);
-        if (!live) {
-          skipped.push(iqName);
-          continue;
+      for (const { iqName, label } of batch) {
+        let history: MirrorCandle[];
+        const existing = store.get(iqName);
+        if (existing && existing.at > Date.now() - STORE_TTL_MS) {
+          history = existing.history;
+        } else {
+          try {
+            history = await loadHistory(fetchCandles, iqName, size, data.historyBlocks);
+          } catch (error) {
+            if (error instanceof IqOptionBackoffError) throw error;
+            skipped.push(label);
+            await sleep(120);
+            continue;
+          }
+          if (history.length < data.windowSize + 6) {
+            skipped.push(label);
+            await sleep(120);
+            continue;
+          }
+          store.set(iqName, { label, history, index: buildSeriesIndex(history), at: Date.now() });
         }
         processed++;
 
-        let liveWindow: MirrorCandle[];
-        try {
-          const freshRaw = await fetchCandles(iqName, size, data.windowSize + 2);
-          // A última vela pode estar em formação: só velas fechadas entram.
-          const freshClosed = freshRaw.slice(0, -1);
-          liveWindow =
-            freshClosed.length >= data.windowSize + 1
-              ? freshClosed.slice(-(data.windowSize + 1))
-              : live.history.slice(0, -1).slice(-(data.windowSize + 1));
-        } catch (error) {
-          if (error instanceof IqOptionBackoffError) throw error;
-          // Corretora recusou essa atualização pontual: cai para a janela coletada.
-          liveWindow = live.history.slice(0, -1).slice(-(data.windowSize + 1));
+        // A última vela pode estar em formação: só velas fechadas entram. Como
+        // acabou de sair do forno, essa janela já é a mais atual possível.
+        const closed = history.slice(0, -1);
+        const liveWindow = closed.slice(-(data.windowSize + 1));
+        if (liveWindow.length >= data.windowSize + 1) {
+          const liveStart = liveWindow[0]!.time;
+          const found: MirrorMatch[] = [];
+          for (const [histName, hist] of store) {
+            found.push(
+              ...findMatchesFast(hist.label, data.timeframe, liveWindow, hist.history, hist.index, {
+                minCorrelation: data.minCorrelation,
+                maxPerAsset: 3,
+                excludeFrom: histName === iqName ? liveStart : undefined,
+                projectionSteps: PROJECTION_STEPS,
+                stepSeconds: size,
+              }).filter((m) => m.projection.length >= PROJECTION_STEPS),
+            );
+          }
+          if (found.length > 0) {
+            found.sort((a, b) => b.correlation - a.correlation);
+            const matches = found.slice(0, MAX_MATCHES);
+            groups.push({ liveAsset: label, liveWindow, matches, consensus: consensusOf(matches) });
+          }
         }
-        await sleep(150);
-        if (liveWindow.length < data.windowSize + 1) continue;
-        const liveStart = liveWindow[0]!.time;
 
-        const found: MirrorMatch[] = [];
-        for (const [histName, hist] of store) {
-          found.push(
-            ...findMatchesFast(hist.label, data.timeframe, liveWindow, hist.history, hist.index, {
-              minCorrelation: data.minCorrelation,
-              maxPerAsset: 3,
-              excludeFrom: histName === iqName ? liveStart : undefined,
-              projectionSteps: PROJECTION_STEPS,
-              stepSeconds: size,
-            }).filter((m) => m.projection.length >= PROJECTION_STEPS),
-          );
-        }
-        if (found.length === 0) continue;
-
-        found.sort((a, b) => b.correlation - a.correlation);
-        const matches = found.slice(0, MAX_MATCHES);
-        groups.push({
-          liveAsset: live.label,
-          liveWindow,
-          matches,
-          consensus: consensusOf(matches),
-        });
+        await sleep(120);
       }
 
       groups.sort((a, b) => (b.matches[0]?.correlation ?? 0) - (a.matches[0]?.correlation ?? 0));
