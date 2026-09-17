@@ -86,7 +86,7 @@ export function MirrorMatchCard({ match, liveWindow }: MirrorMatchCardProps) {
             <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
               Sequência prevista no mercado ao vivo
             </p>
-            <div className="grid gap-2 sm:grid-cols-5">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-5">
               {projection.map((step) => {
                 const up = step.direction === "CALL";
                 return (

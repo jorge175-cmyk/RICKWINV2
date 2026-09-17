@@ -45,7 +45,7 @@ const VERDICT_LABEL: Record<MirrorVerdict["verdict"], string> = {
   SEM_REPETICAO: "Sem repetição",
 };
 
-type Phase = "idle" | "scanning" | "done";
+type Phase = "idle" | "collect" | "match" | "done";
 
 /** Horário local do usuário: é nele que a operação será aberta. */
 const CLOCK_FMT = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" });
@@ -92,15 +92,9 @@ function MirrorPage() {
       .map((a) => a.symbol);
   }, [otcAssets]);
 
-  const running = phase === "scanning";
+  const running = phase === "collect" || phase === "match";
 
-  /**
-   * Varre o catálogo inteiro: cada ativo é baixado fresco na corretora e
-   * imediatamente cruzado contra tudo que já foi baixado até aqui nesta
-   * varredura — o resultado vai aparecendo ao longo da varredura, com a
-   * janela ao vivo sempre relativa ao instante em que aquele ativo foi
-   * processado (não ao início da varredura inteira).
-   */
+  /** Varre o catálogo inteiro: coleta o histórico de todos e cruza todos contra todos. */
   const runFullScan = async () => {
     if (allAssets.length === 0) {
       toast.error("Catálogo de ativos ainda carregando.");
@@ -114,56 +108,63 @@ function MirrorPage() {
     setPendingVerdict(null);
     setSkipped(0);
     setStored({ assets: 0, candles: 0 });
-    setPhase("scanning");
-    let offset = 0;
-    let total = allAssets.length;
+    setProgress({ done: 0, total: allAssets.length });
     let skippedTotal = 0;
-    setProgress({ done: 0, total });
 
-    while (!cancelRef.current) {
-      const chunk = await mirrorScanChunk({
-        data: {
-          timeframe: timeframe as "M1" | "M5" | "M15",
-          windowSize,
-          assets: allAssets.slice(0, 600),
-          offset,
-          limit: CHUNK,
-          // Máximo permitido pelo schema: a coleta já para sozinha quando a
-          // corretora não tem mais velas, então isso puxa o histórico mais
-          // profundo disponível por ativo, sem excesso de acessos nos que
-          // têm pouco histórico.
-          historyBlocks: 20,
-          minCorrelation: 0.93,
-        },
-      });
+    for (const stage of ["collect", "match"] as const) {
+      setPhase(stage);
+      let offset = 0;
+      let total = allAssets.length;
+      setProgress({ done: 0, total });
+      while (!cancelRef.current) {
+        const chunk = await mirrorScanChunk({
+          data: {
+            timeframe: timeframe as "M1" | "M5" | "M15",
+            windowSize,
+            assets: allAssets.slice(0, 600),
+            offset,
+            limit: CHUNK,
+            // Máximo permitido pelo schema: a coleta já para sozinha quando a
+            // corretora não tem mais velas, então isso puxa o histórico mais
+            // profundo disponível por ativo, sem excesso de acessos nos que
+            // têm pouco histórico.
+            historyBlocks: 20,
+            minCorrelation: 0.93,
+            phase: stage,
+          },
+        });
 
-      total = chunk.totalAssets;
-      setStored({ assets: chunk.storedAssets, candles: chunk.storedCandles });
-      skippedTotal += chunk.skippedAssets.length;
-      setSkipped(skippedTotal);
-      if (chunk.groups.length > 0) {
-        // Repetições idênticas sempre no topo da lista.
-        const perfectScore = (g: MirrorAssetGroup) => (g.matches.some((m) => m.exact) ? 1 : 0);
-        setGroups((prev) =>
-          [...prev, ...chunk.groups].sort(
-            (a, b) =>
-              perfectScore(b) - perfectScore(a) ||
-              (b.matches[0]?.correlation ?? 0) - (a.matches[0]?.correlation ?? 0),
-          ),
-        );
+        total = chunk.totalAssets;
+        setStored({ assets: chunk.storedAssets, candles: chunk.storedCandles });
+        if (stage === "collect") {
+          skippedTotal += chunk.skippedAssets.length;
+          setSkipped(skippedTotal);
+        }
+        if (chunk.groups.length > 0) {
+          // Repetições idênticas sempre no topo da lista.
+          const perfectScore = (g: MirrorAssetGroup) => (g.matches.some((m) => m.exact) ? 1 : 0);
+          setGroups((prev) =>
+            [...prev, ...chunk.groups].sort(
+              (a, b) =>
+                perfectScore(b) - perfectScore(a) ||
+                (b.matches[0]?.correlation ?? 0) - (a.matches[0]?.correlation ?? 0),
+            ),
+          );
+        }
+
+        if (chunk.error) {
+          setFeed("error");
+          toast.error(chunk.error);
+        } else if (chunk.storedCandles > 0) {
+          setFeed("ok");
+        }
+
+        const next = chunk.nextOffset;
+        setProgress({ done: next ?? total, total });
+        if (next == null) break;
+        offset = next;
       }
-
-      if (chunk.error) {
-        setFeed("error");
-        toast.error(chunk.error);
-      } else if (chunk.storedCandles > 0) {
-        setFeed("ok");
-      }
-
-      const next = chunk.nextOffset;
-      setProgress({ done: next ?? total, total });
-      if (next == null) break;
-      offset = next;
+      if (cancelRef.current) break;
     }
 
     setPhase(cancelRef.current ? "idle" : "done");
@@ -317,7 +318,11 @@ function MirrorPage() {
           <div className="space-y-2">
             <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
               <Badge variant="secondary">
-                {phase === "scanning" ? "Baixando e cruzando ativos" : "Varredura concluída"}
+                {phase === "collect"
+                  ? "Etapa 1 de 2 — baixando histórico"
+                  : phase === "match"
+                    ? "Etapa 2 de 2 — cruzando todos contra todos"
+                    : "Varredura concluída"}
               </Badge>
               <span>
                 {progress.done} de {progress.total} ativos
@@ -355,7 +360,7 @@ function MirrorPage() {
               <CardContent className="space-y-2">
                 {perfect.map((g) => {
                   const m = g.matches.find((x) => x.exact)!;
-                  const plan = m.projection.slice(0, 5);
+                  const plan = m.projection;
                   return (
                     <p key={g.liveAsset} className="text-sm">
                       <span className="font-display font-bold text-foreground">{g.liveAsset}</span>{" "}
@@ -384,7 +389,7 @@ function MirrorPage() {
           const hasPerfect = perfectMatch != null;
           /** O plano de operações segue a repetição idêntica quando existe. */
           const planMatch = perfectMatch ?? group.matches[0];
-          const plan = (planMatch?.projection ?? []).slice(0, 5);
+          const plan = planMatch?.projection ?? [];
           return (
             <section key={group.liveAsset} className="space-y-3">
               <div
@@ -422,7 +427,7 @@ function MirrorPage() {
                     <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                       Plano das próximas {plan.length} velas · {group.liveAsset}
                     </p>
-                    <div className="grid gap-2 sm:grid-cols-5">
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-5">
                       {plan.map((step) => {
                         const up = step.direction === "CALL";
                         const past = step.time * 1000 < Date.now();
