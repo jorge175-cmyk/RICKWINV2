@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { getIqOptionName, timeframeSeconds } from "@/lib/iqoption/mapping";
+import { getStoredCandles, saveCandles } from "@/lib/iqoption/candleHistory.server";
 import {
   buildSeriesIndex,
   consensusOf,
@@ -23,24 +24,49 @@ function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
-/** Baixa blocos de histórico voltando no tempo e devolve uma série contínua. */
+/**
+ * Histórico de um ativo: parte do que já está salvo no banco (instantâneo) e
+ * só busca na corretora as velas mais novas que ainda não foram vistas.
+ * Na primeira vez que um ativo é varrido (nada salvo ainda), faz o backfill
+ * completo voltando no tempo, como antes — e persiste tudo para a próxima.
+ */
 async function loadHistory(
   fetchCandles: (name: string, size: number, count: number, to?: number) => Promise<MirrorCandle[]>,
   iqName: string,
+  timeframeLabel: string,
   sizeSeconds: number,
   blocks: number,
 ): Promise<MirrorCandle[]> {
+  const stored = await getStoredCandles(iqName, timeframeLabel);
+  const newestStoredTime = stored.length > 0 ? stored[stored.length - 1]!.time : null;
+
   const byTime = new Map<number, MirrorCandle>();
+  for (const c of stored) byTime.set(c.time, c);
+
+  const fresh: MirrorCandle[] = [];
   let to = Math.floor(Date.now() / 1000);
   for (let i = 0; i < blocks; i++) {
     const chunk = await fetchCandles(iqName, sizeSeconds, BLOCK_SIZE, i === 0 ? undefined : to);
     if (chunk.length === 0) break;
-    for (const c of chunk) byTime.set(c.time, c);
+    for (const c of chunk) {
+      if (!byTime.has(c.time)) fresh.push(c);
+      byTime.set(c.time, c);
+    }
     const oldest = chunk[0]!.time;
+    // Bloco já alcançou o que estava salvo: o resto do histórico é conhecido.
+    if (newestStoredTime != null && oldest <= newestStoredTime) break;
     if (oldest >= to) break;
     to = oldest - sizeSeconds;
     // Espaçamento entre requisições: evita bloqueio por excesso de acessos.
     await sleep(250);
+  }
+
+  if (fresh.length > 0) {
+    await saveCandles(
+      iqName,
+      timeframeLabel,
+      fresh.map((c) => ({ ...c, volume: c.volume ?? 0 })),
+    );
   }
   return [...byTime.values()].sort((a, b) => a.time - b.time);
 }
@@ -176,7 +202,7 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
             continue;
           }
           try {
-            const history = await loadHistory(fetchCandles, iqName, size, data.historyBlocks);
+            const history = await loadHistory(fetchCandles, iqName, data.timeframe, size, data.historyBlocks);
             if (history.length < data.windowSize + 6) {
               skipped.push(label);
               continue;
@@ -199,7 +225,10 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
         };
       }
 
-      // ---- fase de cruzamento: nenhuma requisição à corretora ----
+      // ---- fase de cruzamento: uma requisição leve por ativo para atualizar
+      // a janela ao vivo (a coleta pode ter rodado minutos atrás; sem isso as
+      // próximas velas projetadas ficariam datadas de quando a coleta rodou,
+      // não de agora) ----
       const groups: MirrorAssetGroup[] = [];
       const skipped: string[] = [];
       let processed = 0;
@@ -211,9 +240,22 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
           continue;
         }
         processed++;
-        // A última vela pode estar em formação: só velas fechadas entram.
-        const closed = live.history.slice(0, -1);
-        const liveWindow = closed.slice(-(data.windowSize + 1));
+
+        let liveWindow: MirrorCandle[];
+        try {
+          const freshRaw = await fetchCandles(iqName, size, data.windowSize + 2);
+          // A última vela pode estar em formação: só velas fechadas entram.
+          const freshClosed = freshRaw.slice(0, -1);
+          liveWindow =
+            freshClosed.length >= data.windowSize + 1
+              ? freshClosed.slice(-(data.windowSize + 1))
+              : live.history.slice(0, -1).slice(-(data.windowSize + 1));
+        } catch (error) {
+          if (error instanceof IqOptionBackoffError) throw error;
+          // Corretora recusou essa atualização pontual: cai para a janela coletada.
+          liveWindow = live.history.slice(0, -1).slice(-(data.windowSize + 1));
+        }
+        await sleep(150);
         if (liveWindow.length < data.windowSize + 1) continue;
         const liveStart = liveWindow[0]!.time;
 

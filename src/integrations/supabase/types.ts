@@ -47,6 +47,42 @@ export type Database = {
         }
         Relationships: []
       }
+      iqoption_candles: {
+        Row: {
+          asset: string
+          timeframe: string
+          time: number
+          open: number
+          high: number
+          low: number
+          close: number
+          volume: number
+          updated_at: string
+        }
+        Insert: {
+          asset: string
+          timeframe: string
+          time: number
+          open: number
+          high: number
+          low: number
+          close: number
+          volume?: number
+          updated_at?: string
+        }
+        Update: {
+          asset?: string
+          timeframe?: string
+          time?: number
+          open?: number
+          high?: number
+          low?: number
+          close?: number
+          volume?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       iqoption_connection_state: {
         Row: {
           login_blocked_reason: string | null
