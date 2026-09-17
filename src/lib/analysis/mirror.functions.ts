@@ -91,7 +91,12 @@ const chunkSchema = z.object({
   assets: z.array(z.string()).min(1).max(600),
   offset: z.number().int().min(0).default(0),
   limit: z.number().int().min(1).max(24).default(10),
-  historyBlocks: z.number().int().min(1).max(6).default(2),
+  // Cada bloco fica mais barato pois blocos antigos ficam em cache de longa
+  // duração (ver fetchCandles). loadHistory já para sozinho quando a
+  // corretora não tem mais velas para entregar, então um teto alto aqui só
+  // significa "puxe o máximo que a corretora tiver", sem excesso de requisições
+  // para ativos com histórico mais curto.
+  historyBlocks: z.number().int().min(1).max(20).default(6),
   minCorrelation: z.number().min(0.7).max(0.999).default(0.93),
   /**
    * "collect" baixa o histórico deste trecho do catálogo.

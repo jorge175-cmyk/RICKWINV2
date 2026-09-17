@@ -125,9 +125,11 @@ function MirrorPage() {
             assets: allAssets.slice(0, 600),
             offset,
             limit: CHUNK,
-            // Máximo permitido pelo schema: o histórico mais profundo que a
-            // corretora entrega sem estourar a proteção contra excesso de acessos.
-            historyBlocks: 6,
+            // Máximo permitido pelo schema: a coleta já para sozinha quando a
+            // corretora não tem mais velas, então isso puxa o histórico mais
+            // profundo disponível por ativo, sem excesso de acessos nos que
+            // têm pouco histórico.
+            historyBlocks: 20,
             minCorrelation: 0.93,
             phase: stage,
           },
