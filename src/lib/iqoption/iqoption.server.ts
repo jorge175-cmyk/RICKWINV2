@@ -414,10 +414,16 @@ async function withSession<T>(
     // A single slow candle response must not tear down the shared connection
     // used by every other request. Recreate it only when the transport died.
     const socketDied = session.socket.readyState !== 1;
-    if (socketDied) discardSharedSession();
-    // A dead socket recovers on a fresh transport with the cached SSID. A
-    // request timeout is returned to its caller without disrupting others.
-    if (socketDied && attempt === 0 && !(error instanceof IqOptionBackoffError)) {
+    // Cloudflare Workers forbids using a socket created in a *different*
+    // request's context — the socket itself still reports readyState 1, so
+    // the check above misses it, and every call on that stale reference
+    // throws this exact message instead of a normal close/error event.
+    const crossRequestIo = error instanceof Error && /different request/i.test(error.message);
+    if (socketDied || crossRequestIo) discardSharedSession();
+    // A dead (or cross-request) socket recovers on a fresh transport with the
+    // cached SSID. A request timeout is returned to its caller without
+    // disrupting others.
+    if ((socketDied || crossRequestIo) && attempt === 0 && !(error instanceof IqOptionBackoffError)) {
       return withSession(fn, attempt + 1);
     }
     throw error;
