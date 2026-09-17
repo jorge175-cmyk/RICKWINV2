@@ -15,11 +15,19 @@ import {
 const BLOCK_SIZE = 500;
 const MAX_MATCHES = 8;
 /**
- * Quantas velas à frente cada coincidência precisa projetar. Alto de propósito:
+ * Quantas velas à frente CADA coincidência tenta projetar. Alto de propósito:
  * a varredura completa (coleta + cruzamento) pode levar minutos, então o plano
  * precisa ter fôlego para ainda ter velas no futuro quando o resultado aparece.
  */
 const PROJECTION_STEPS = 20;
+/**
+ * Mínimo de velas projetadas para uma coincidência ser aceita. Exigir os 20
+ * completos descartava replays válidos que só tinham, digamos, 10 velas de
+ * histórico disponíveis depois do ponto do replay (comum na leitura invertida
+ * no tempo, que projeta "pra trás" no array). 5 é o suficiente para valer a
+ * pena mostrar, mesmo quando não há espaço para as 20.
+ */
+const MIN_PROJECTION_STEPS = 5;
 /** Tempo que o histórico baixado continua reaproveitável na varredura. */
 const STORE_TTL_MS = 25 * 60 * 1000;
 
@@ -230,7 +238,7 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
               excludeFrom: histName === iqName ? liveStart : undefined,
               projectionSteps: PROJECTION_STEPS,
               stepSeconds: size,
-            }).filter((m) => m.projection.length >= PROJECTION_STEPS),
+            }).filter((m) => m.projection.length >= MIN_PROJECTION_STEPS),
           );
         }
         if (found.length === 0) continue;
