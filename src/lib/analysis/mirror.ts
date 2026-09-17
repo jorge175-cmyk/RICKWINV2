@@ -488,9 +488,14 @@ export function findMatchesFast(
       const r = (dot / k - vStats.mean * winStats.mean) / (vStats.sd * winStats.sd);
       if (!Number.isFinite(r) || r < minCorrelation) continue;
 
+      const window = hist.slice(start, start + k + 1);
+      // Filtro de replay: só passa o que reproduz a vela ao vivo, não o "parecido".
+      const deviation = replayDeviation(live, window, transform);
+      const exact = deviation <= exactTolerance;
+      if (exactOnly && !exact) continue;
+
       const projection = projectedPath(hist, start, k + 1, transform, steps);
       if (!projection) continue;
-      const window = hist.slice(start, start + k + 1);
       const scaled = projection.value / (ratio || 1);
       found.push({
         asset,
@@ -498,6 +503,8 @@ export function findMatchesFast(
         transform,
         correlation: r,
         similarity: Math.round(r * 1000) / 10,
+        maxDeviation: deviation,
+        exact,
         startTime: window[0]!.time,
         endTime: window[window.length - 1]!.time,
         volatilityRatio: Math.round(ratio * 100) / 100,
