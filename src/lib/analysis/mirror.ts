@@ -431,8 +431,10 @@ export function findMatchesFast(
   index: MirrorSeriesIndex,
   options: MirrorSearchOptions = {},
 ): MirrorMatch[] {
-  const minCorrelation = options.minCorrelation ?? 0.93;
-  const tolerance = options.volatilityTolerance ?? 2.4;
+  const exactOnly = options.exactOnly ?? true;
+  const exactTolerance = options.exactTolerance ?? 0.05;
+  const minCorrelation = options.minCorrelation ?? (exactOnly ? 0.995 : 0.93);
+  const tolerance = options.volatilityTolerance ?? (exactOnly ? 1.15 : 2.4);
   const maxPerAsset = options.maxPerAsset ?? 3;
   const steps = Math.max(1, options.projectionSteps ?? 5);
   const stepSeconds = options.stepSeconds ?? inferStepSeconds(live);
