@@ -339,10 +339,10 @@ function MirrorPage() {
         {phase === "done" && groups.length === 0 && (
           <Card className="border-border/50 bg-surface/40">
             <CardContent className="space-y-2 p-6 text-center">
-              <p className="font-display text-sm font-semibold">Nenhuma repetição encontrada</p>
+              <p className="font-display text-sm font-semibold">Nenhum replay idêntico encontrado</p>
               <p className="text-xs text-muted-foreground">
-                Nenhum ativo está repetindo um trecho conhecido agora. Tente outro timeframe ou menos velas
-                comparadas, e repita em instantes.
+                A varredura aceita apenas repetições vela a vela idênticas — o que é só parecido é
+                descartado. Tente outro timeframe ou menos velas comparadas e repita em instantes.
               </p>
             </CardContent>
           </Card>
