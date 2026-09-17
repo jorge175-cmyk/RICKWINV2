@@ -29,7 +29,11 @@ const PROJECTION_STEPS = 20;
  * pena mostrar, mesmo quando não há espaço para as 20.
  */
 const MIN_PROJECTION_STEPS = 5;
-/** Tempo que o histórico baixado continua reaproveitável na varredura. */
+/**
+ * Só usado para limpar entradas abandonadas do cache em memória (ex.: um
+ * ativo que saiu do catálogo no meio de uma varredura anterior). NÃO controla
+ * se um ativo é buscado de novo — isso acontece sempre, a cada varredura.
+ */
 const STORE_TTL_MS = 25 * 60 * 1000;
 
 function sleep(ms: number) {
@@ -210,13 +214,19 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
         const skipped: string[] = [];
         let processed = 0;
         for (const { iqName, label } of batch) {
-          const existing = store.get(iqName);
-          if (existing && existing.at > Date.now() - STORE_TTL_MS) {
-            processed++;
-            continue;
-          }
+          // Sempre busca de novo, mesmo se este ativo já está no cache: cada
+          // varredura precisa refletir as velas mais recentes no momento em
+          // que o usuário clicou, não o que estava ao vivo há minutos atrás
+          // (loadHistory é barata para isso — só busca na corretora o que
+          // ainda não está salvo no banco).
           try {
-            const history = await loadHistory(fetchCandles, iqName, data.timeframe, size, data.historyBlocks);
+            const history = await loadHistory(
+              fetchCandles,
+              iqName,
+              data.timeframe,
+              size,
+              data.historyBlocks,
+            );
             if (history.length < data.windowSize + 6) {
               // Sem isto, uma falha silenciosa de fetchCandles (ex.: sessão da
               // corretora não sobrevivendo entre requisições) some sem deixar
