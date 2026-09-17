@@ -241,7 +241,12 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
         });
       }
 
-      groups.sort((a, b) => (b.matches[0]?.correlation ?? 0) - (a.matches[0]?.correlation ?? 0));
+      groups.sort(
+        (a, b) =>
+          (a.matches[0]?.maxDeviation ?? Number.POSITIVE_INFINITY) -
+            (b.matches[0]?.maxDeviation ?? Number.POSITIVE_INFINITY) ||
+          (b.matches[0]?.correlation ?? 0) - (a.matches[0]?.correlation ?? 0),
+      );
 
       return {
         ...base,
