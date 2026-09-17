@@ -7,23 +7,18 @@ const IQ_LOGIN_URL = "https://auth.iqoption.com/api/v2/login";
 
 // IQ Option sessions normally outlive a worker instance by days. Refreshing
 // them every few hours caused avoidable login bursts from serverless workers.
+// This part IS safe to share across requests: it's a plain string, not a
+// socket, so nothing here touches Cloudflare Workers' cross-request I/O rule.
 const SSID_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-// Keep the authenticated upstream socket for as long as the worker lives; a
-// heartbeat keeps it warm so no re-login is ever needed for normal usage.
-// Quiet periods must never drop it: rebuilding the socket is what used to make
-// the provider treat the account as a brand new session.
-const SESSION_IDLE_MS = 24 * 60 * 60 * 1000;
 
 // Tickers confirmed by the account owner as no longer offered in the IQ Option
 // app, but still present (unsuspended) in the broker's initialization catalog.
 // Add here if another stale/delisted asset surfaces in the scan.
 const BLOCKED_ACTIVE_NAMES = new Set(["ETHBTC", "ETHBTC-OTC"]);
 
-const HEARTBEAT_INTERVAL_MS = 20_000;
 const MAX_BACKOFF_MS = 60 * 60 * 1000;
 const LOGIN_LEASE_SECONDS = 25;
 const LOGIN_WAIT_ATTEMPTS = 15;
-
 
 let cachedSsid: { value: string; expiresAt: number } | null = null;
 let ssidPromise: Promise<string> | null = null;
@@ -61,7 +56,8 @@ function registerLoginFailure(status: number, response?: Response) {
   const exponential = Math.min(base * 2 ** Math.min(loginFailures - 1, 4), MAX_BACKOFF_MS);
   const delay = Math.min(Math.max(providerDelay ?? 0, exponential), MAX_BACKOFF_MS);
   loginBlockedUntil = Date.now() + delay;
-  loginBlockedReason = status === 429 ? "IQ Option login rate limited" : "IQ Option login temporarily unavailable";
+  loginBlockedReason =
+    status === 429 ? "IQ Option login rate limited" : "IQ Option login temporarily unavailable";
   return delay;
 }
 
@@ -148,7 +144,8 @@ export async function getSsid(): Promise<string> {
       const remainingMs = Math.max(1_000, blockedUntil - Date.now());
       if (state.login_blocked_reason !== "Login em andamento") {
         loginBlockedUntil = blockedUntil;
-        loginBlockedReason = state.login_blocked_reason ?? "IQ Option login temporarily unavailable";
+        loginBlockedReason =
+          state.login_blocked_reason ?? "IQ Option login temporarily unavailable";
         throw new IqOptionBackoffError(loginBlockedReason, remainingMs);
       }
       await wait(Math.min(2_000, remainingMs));
@@ -269,48 +266,28 @@ interface UpstreamFrame {
   msg?: unknown;
 }
 
-interface SharedSession {
-  socket: WebSocket;
-  send: (frame: unknown) => void;
-  waitFor: (predicate: (frame: UpstreamFrame) => boolean, ms?: number) => Promise<UpstreamFrame>;
-  touchedAt: number;
-  heartbeat: ReturnType<typeof setInterval> | null;
-}
+type Send = (frame: unknown) => void;
+type WaitFor = (
+  predicate: (frame: UpstreamFrame) => boolean,
+  ms?: number,
+) => Promise<UpstreamFrame>;
 
-let sharedSession: SharedSession | null = null;
-let sharedSessionPromise: Promise<SharedSession> | null = null;
-let sessionIdleTimer: ReturnType<typeof setTimeout> | null = null;
-
-function discardSharedSession() {
-  if (sessionIdleTimer) clearTimeout(sessionIdleTimer);
-  sessionIdleTimer = null;
-  const session = sharedSession;
-  sharedSession = null;
-  if (!session) return;
-  if (session.heartbeat) clearInterval(session.heartbeat);
-  session.heartbeat = null;
-  try {
-    session.socket.close();
-  } catch {
-    // already closed
-  }
-}
-
-function armSessionIdleTimer(session: SharedSession) {
-  if (sessionIdleTimer) clearTimeout(sessionIdleTimer);
-  sessionIdleTimer = setTimeout(() => {
-    if (sharedSession === session && Date.now() - session.touchedAt >= SESSION_IDLE_MS) {
-      discardSharedSession();
-    }
-  }, SESSION_IDLE_MS);
-}
-
-
-/** One authenticated upstream socket shared by all server requests in this worker. */
-async function createSharedSession(): Promise<SharedSession> {
-  // Resolve the coordinated credential before opening a socket. During a
-  // provider cooldown this avoids creating a fresh upstream connection for
-  // every candle/analysis request.
+/**
+ * Opens one upstream socket, authenticates it, runs `fn`, then always closes
+ * it. Cloudflare Workers forbids touching an I/O object (a WebSocket
+ * included) from a request other than the one that created it — merely
+ * reading a leftover socket's `.readyState` from a new request throws
+ * "Cannot perform I/O on behalf of a different request". A module-level
+ * "shared session" reused across requests used to hit this on nearly every
+ * call, which is why every asset in a scan could fail at once. A connection
+ * per call sidesteps the restriction entirely; the SSID (a plain string, no
+ * I/O attached) still comes from getSsid()'s cross-request cache, so this
+ * doesn't need a fresh login each time — only a fresh socket handshake.
+ */
+async function withSession<T>(
+  fn: (send: Send, waitFor: WaitFor) => Promise<T>,
+  attempt = 0,
+): Promise<T> {
   const ssid = await getSsid();
   const socket = await openUpstreamSocket();
   const listeners = new Set<(frame: UpstreamFrame) => void>();
@@ -327,8 +304,8 @@ async function createSharedSession(): Promise<SharedSession> {
     for (const listener of [...listeners]) listener(frame);
   });
 
-  const send = (frame: unknown) => socket.send(JSON.stringify(frame));
-  const waitFor = (predicate: (f: UpstreamFrame) => boolean, ms = 10_000) =>
+  const send: Send = (frame) => socket.send(JSON.stringify(frame));
+  const waitFor: WaitFor = (predicate, ms = 10_000) =>
     new Promise<UpstreamFrame>((resolve, reject) => {
       const timer = setTimeout(() => {
         listeners.delete(listener);
@@ -348,85 +325,21 @@ async function createSharedSession(): Promise<SharedSession> {
     authenticate(socket, ssid);
     // IQ Option drops requests sent before the session profile is delivered.
     await waitFor((f) => f.name === "profile" && !!f.msg, 15_000);
+    return await fn(send, waitFor);
   } catch (error) {
+    // One retry with a brand-new connection covers a handshake/transport
+    // hiccup (e.g. the socket dying mid-open). A backoff error means the
+    // provider itself rejected us — retrying immediately would not help.
+    if (attempt === 0 && !(error instanceof IqOptionBackoffError)) {
+      return withSession(fn, attempt + 1);
+    }
+    throw error;
+  } finally {
     try {
       socket.close();
     } catch {
       // already closed
     }
-    throw error;
-  }
-
-  const session: SharedSession = { socket, send, waitFor, touchedAt: Date.now(), heartbeat: null };
-  // A periodic heartbeat keeps the authenticated socket alive, so the session
-  // survives quiet periods and never needs a fresh login.
-  session.heartbeat = setInterval(() => {
-    if (socket.readyState !== 1) return;
-    try {
-      const now = Date.now();
-      send({ name: "heartbeat", msg: { userTime: now, heartbeatTime: now } });
-    } catch {
-      // socket died; the close listener handles recovery
-    }
-  }, HEARTBEAT_INTERVAL_MS);
-  const invalidate = () => {
-    if (sharedSession === session) discardSharedSession();
-    else if (session.heartbeat) {
-      clearInterval(session.heartbeat);
-      session.heartbeat = null;
-    }
-  };
-  socket.addEventListener("close", invalidate);
-  socket.addEventListener("error", invalidate);
-  return session;
-}
-
-async function getSharedSession(): Promise<SharedSession> {
-  if (sharedSession?.socket.readyState === 1) {
-    sharedSession.touchedAt = Date.now();
-    armSessionIdleTimer(sharedSession);
-    return sharedSession;
-  }
-  if (sharedSessionPromise) return sharedSessionPromise;
-
-  sharedSessionPromise = createSharedSession()
-    .then((session) => {
-      sharedSession = session;
-      armSessionIdleTimer(session);
-      return session;
-    })
-    .finally(() => {
-      sharedSessionPromise = null;
-    });
-  return sharedSessionPromise;
-}
-
-async function withSession<T>(
-  fn: (send: SharedSession["send"], waitFor: SharedSession["waitFor"]) => Promise<T>,
-  attempt = 0,
-): Promise<T> {
-  const session = await getSharedSession();
-  session.touchedAt = Date.now();
-  armSessionIdleTimer(session);
-  try {
-    return await fn(session.send, session.waitFor);
-  } catch (error) {
-    // A single slow candle response must not tear down the shared connection
-    // used by every other request. Recreate it only when the transport died.
-    const socketDied = session.socket.readyState !== 1;
-    // Cloudflare Workers forbids using a socket created in a *different*
-    // request's context — the socket itself still reports readyState 1, so
-    // the check above misses it, and every call on that stale reference
-    // throws this exact message instead of a normal close/error event.
-    const crossRequestIo = error instanceof Error && /different request/i.test(error.message);
-    if (socketDied || crossRequestIo) discardSharedSession();
-    // A dead (or cross-request) socket recovers on a fresh transport with the
-    // cached SSID. A request timeout is returned to its caller without
-    // disrupting others.
-    if ((socketDied || crossRequestIo) && attempt === 0 && !(error instanceof IqOptionBackoffError)) {
-      return withSession(fn, attempt + 1);
-    }
-    throw error;
   }
 }
 
@@ -440,7 +353,10 @@ export async function getActiveIdMap(): Promise<Record<string, number>> {
       request_id: "init",
       msg: { name: "get-initialization-data", version: "3.0", body: {} },
     });
-    const frame = await waitFor((f) => f.name === "initialization-data" || f.request_id === "init", 15_000);
+    const frame = await waitFor(
+      (f) => f.name === "initialization-data" || f.request_id === "init",
+      15_000,
+    );
     interface RawActive {
       name?: string;
       enabled?: boolean;
@@ -457,18 +373,21 @@ export async function getActiveIdMap(): Promise<Record<string, number>> {
         if (active?.enabled === false) continue;
         if (active?.is_suspended === true) continue;
         if (active?.is_open === false) continue;
-        if (BLOCKED_ACTIVE_NAMES.has((active?.name ?? "").replace(/^front\./, "").toUpperCase())) continue;
+        if (BLOCKED_ACTIVE_NAMES.has((active?.name ?? "").replace(/^front\./, "").toUpperCase()))
+          continue;
         const name = (active?.name ?? "").replace(/^front\./, "").toUpperCase();
         if (name && !result[name]) result[name] = Number(id);
       }
     }
     return result;
-  }).then((map) => {
-    activeIdCache = { map, expiresAt: Date.now() + 60 * 60 * 1000 };
-    return map;
-  }).finally(() => {
-    activeIdPromise = null;
-  });
+  })
+    .then((map) => {
+      activeIdCache = { map, expiresAt: Date.now() + 60 * 60 * 1000 };
+      return map;
+    })
+    .finally(() => {
+      activeIdPromise = null;
+    });
 
   const map = await activeIdPromise;
 
