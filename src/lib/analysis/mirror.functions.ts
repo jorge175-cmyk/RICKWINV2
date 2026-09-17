@@ -31,21 +31,55 @@ const MIN_PROJECTION_STEPS = 5;
 /** Tempo que o histórico baixado continua reaproveitável na varredura. */
 const STORE_TTL_MS = 25 * 60 * 1000;
 
+export type Broker = "iqoption" | "binolla";
+
 function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Carrega o módulo da corretora escolhida. Mantém os dois brokers com a mesma
+ * forma (fetchCandles + classe de erro "conexão em recuperação") para que o
+ * resto do arquivo não precise saber qual corretora está em uso.
+ */
+async function loadBroker(broker: Broker) {
+  if (broker === "binolla") {
+    const mod = await import("@/lib/binolla/binolla.server");
+    return {
+      fetchCandles: mod.fetchCandles,
+      isBackoffError: (error: unknown) => error instanceof mod.BinollaAuthError,
+      backoffMessage: "Token da Binolla ausente, expirado ou inválido. Atualize o BINOLLA_ACCESS_TOKEN.",
+    };
+  }
+  const mod = await import("@/lib/iqoption/iqoption.server");
+  return {
+    fetchCandles: mod.fetchCandles,
+    isBackoffError: (error: unknown) => error instanceof mod.IqOptionBackoffError,
+    backoffMessage: "Conexão com a corretora em recuperação. Retomando em instantes.",
+  };
+}
+
+/** Normaliza o nome de um ativo para o formato que a corretora reconhece. */
+function translateFor(broker: Broker): (symbol: string) => string | null {
+  if (broker === "binolla") {
+    // O catálogo da Binolla já vem no formato nativo dela (ex.: "EURUSD_otc");
+    // não existe tradução como a da IQ Option, só validação simples.
+    return (symbol: string) => (symbol && symbol.trim() ? symbol.trim() : null);
+  }
+  return getIqOptionName;
 }
 
 /** Baixa blocos de histórico voltando no tempo e devolve uma série contínua. */
 async function loadHistory(
   fetchCandles: (name: string, size: number, count: number, to?: number) => Promise<MirrorCandle[]>,
-  iqName: string,
+  providerName: string,
   sizeSeconds: number,
   blocks: number,
 ): Promise<MirrorCandle[]> {
   const byTime = new Map<number, MirrorCandle>();
   let to = Math.floor(Date.now() / 1000);
   for (let i = 0; i < blocks; i++) {
-    const chunk = await fetchCandles(iqName, sizeSeconds, BLOCK_SIZE, i === 0 ? undefined : to);
+    const chunk = await fetchCandles(providerName, sizeSeconds, BLOCK_SIZE, i === 0 ? undefined : to);
     if (chunk.length === 0) break;
     for (const c of chunk) byTime.set(c.time, c);
     const oldest = chunk[0]!.time;
@@ -67,36 +101,40 @@ interface StoredSeries {
 /**
  * Histórico já baixado, reaproveitado entre as etapas da varredura global.
  * Vive no processo do servidor; se for perdido, a etapa de coleta refaz.
+ * Chave composta por corretora+timeframe: os dados de uma nunca se misturam
+ * com os da outra mesmo que os nomes de ativo coincidam por acaso.
  */
 const historyStore = new Map<string, Map<string, StoredSeries>>();
 
-function storeFor(timeframe: string): Map<string, StoredSeries> {
-  let bucket = historyStore.get(timeframe);
+function storeFor(broker: Broker, timeframe: string): Map<string, StoredSeries> {
+  const key = `${broker}:${timeframe}`;
+  let bucket = historyStore.get(key);
   if (!bucket) {
     bucket = new Map();
-    historyStore.set(timeframe, bucket);
+    historyStore.set(key, bucket);
   }
   const cutoff = Date.now() - STORE_TTL_MS;
-  for (const [key, value] of bucket) {
-    if (value.at < cutoff) bucket.delete(key);
+  for (const [k, value] of bucket) {
+    if (value.at < cutoff) bucket.delete(k);
   }
   return bucket;
 }
 
 /** Catálogo normalizado (nomes reconhecidos pela corretora, sem repetição). */
-function buildCatalog(assets: string[]): Array<{ iqName: string; label: string }> {
-  const out: Array<{ iqName: string; label: string }> = [];
+function buildCatalog(assets: string[], translate: (symbol: string) => string | null) {
+  const out: Array<{ providerName: string; label: string }> = [];
   const seen = new Set<string>();
   for (const symbol of assets) {
-    const iqName = getIqOptionName(symbol);
-    if (!iqName || seen.has(iqName)) continue;
-    seen.add(iqName);
-    out.push({ iqName, label: symbol });
+    const providerName = translate(symbol);
+    if (!providerName || seen.has(providerName)) continue;
+    seen.add(providerName);
+    out.push({ providerName, label: symbol });
   }
   return out;
 }
 
 const chunkSchema = z.object({
+  broker: z.enum(["iqoption", "binolla"]).default("iqoption"),
   timeframe: z.enum(["M1", "M5", "M15"]),
   windowSize: z.number().int().min(12).max(60).default(24),
   /** Catálogo completo de ativos da corretora. */
@@ -147,10 +185,10 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => chunkSchema.parse(input))
   .handler(async ({ data }): Promise<MirrorChunkResult> => {
-    const { fetchCandles, IqOptionBackoffError } = await import("@/lib/iqoption/iqoption.server");
+    const { fetchCandles, isBackoffError, backoffMessage } = await loadBroker(data.broker);
     const size = timeframeSeconds(data.timeframe);
-    const catalog = buildCatalog(data.assets);
-    const store = storeFor(data.timeframe);
+    const catalog = buildCatalog(data.assets, translateFor(data.broker));
+    const store = storeFor(data.broker, data.timeframe);
 
     const countCandles = () => {
       let total = 0;
@@ -182,29 +220,29 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
       if (data.phase === "collect") {
         const skipped: string[] = [];
         let processed = 0;
-        for (const { iqName, label } of batch) {
-          const existing = store.get(iqName);
+        for (const { providerName, label } of batch) {
+          const existing = store.get(providerName);
           if (existing && existing.at > Date.now() - STORE_TTL_MS) {
             processed++;
             continue;
           }
           try {
-            const history = await loadHistory(fetchCandles, iqName, size, data.historyBlocks);
+            const history = await loadHistory(fetchCandles, providerName, size, data.historyBlocks);
             if (history.length < data.windowSize + 6) {
               // Sem isto, uma falha silenciosa de fetchCandles (ex.: sessão da
               // corretora não sobrevivendo entre requisições) some sem deixar
               // rastro nos logs - aparece só como "sem histórico suficiente".
               console.warn(
-                `[mirror] histórico insuficiente para ${iqName}: ${history.length} vela(s)`,
+                `[mirror] histórico insuficiente para ${providerName}: ${history.length} vela(s)`,
               );
               skipped.push(label);
               continue;
             }
-            store.set(iqName, { label, history, index: buildSeriesIndex(history), at: Date.now() });
+            store.set(providerName, { label, history, index: buildSeriesIndex(history), at: Date.now() });
             processed++;
           } catch (error) {
-            if (error instanceof IqOptionBackoffError) throw error;
-            console.error(`[mirror] loadHistory falhou para ${iqName}:`, error);
+            if (isBackoffError(error)) throw error;
+            console.error(`[mirror] loadHistory falhou para ${providerName}:`, error);
             skipped.push(label);
           }
           await sleep(120);
@@ -224,10 +262,10 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
       const skipped: string[] = [];
       let processed = 0;
 
-      for (const { iqName } of batch) {
-        const live = store.get(iqName);
+      for (const { providerName } of batch) {
+        const live = store.get(providerName);
         if (!live) {
-          skipped.push(iqName);
+          skipped.push(providerName);
           continue;
         }
         processed++;
@@ -243,7 +281,7 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
             ...findMatchesFast(hist.label, data.timeframe, liveWindow, hist.history, hist.index, {
               minCorrelation: data.minCorrelation,
               maxPerAsset: 3,
-              excludeFrom: histName === iqName ? liveStart : undefined,
+              excludeFrom: histName === providerName ? liveStart : undefined,
               projectionSteps: PROJECTION_STEPS,
               stepSeconds: size,
             }).filter((m) => m.projection.length >= MIN_PROJECTION_STEPS),
@@ -274,12 +312,8 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
       };
     } catch (error) {
       console.error("[mirror] scan chunk failed", error);
-      if (error instanceof IqOptionBackoffError) {
-        return {
-          ...base,
-          nextOffset,
-          error: "Conexão com a corretora em recuperação. Retomando em instantes.",
-        };
+      if (isBackoffError(error)) {
+        return { ...base, nextOffset, error: backoffMessage };
       }
       return { ...base, nextOffset, error: "Não foi possível concluir esta etapa da varredura." };
     }

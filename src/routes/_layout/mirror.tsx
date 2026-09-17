@@ -8,7 +8,8 @@ import { Progress } from "@/components/ui/progress";
 import { TimeframeSelector } from "@/components/trading/TimeframeSelector";
 import { MirrorMatchCard } from "@/components/trading/MirrorMatchCard";
 import { getOtcAssets } from "@/lib/iqoption/candles.functions";
-import { mirrorScanChunk, type MirrorAssetGroup } from "@/lib/analysis/mirror.functions";
+import { getBinollaAssets } from "@/lib/binolla/binolla.functions";
+import { mirrorScanChunk, type Broker, type MirrorAssetGroup } from "@/lib/analysis/mirror.functions";
 import { mirrorVerdict, type MirrorVerdict } from "@/lib/analysis/mirrorVerdict.functions";
 
 import { toast } from "sonner";
@@ -16,6 +17,10 @@ import { ArrowLeft, Copy, Loader2, Search, Sparkles, StopCircle, Wifi, WifiOff }
 
 const FALLBACK_ASSETS = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CHF", "USD/CAD"];
 const CHUNK = 10;
+const BROKERS: Array<{ value: Broker; label: string }> = [
+  { value: "iqoption", label: "IQ Option" },
+  { value: "binolla", label: "Binolla" },
+];
 
 export const Route = createFileRoute("/_layout/mirror")({
   component: MirrorPage,
@@ -52,6 +57,7 @@ const CLOCK_FMT = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2
 
 
 function MirrorPage() {
+  const [broker, setBroker] = useState<Broker>("iqoption");
   const [timeframe, setTimeframe] = useState("M1");
   const [windowSize, setWindowSize] = useState(40);
   const [phase, setPhase] = useState<Phase>("idle");
@@ -73,11 +79,30 @@ function MirrorPage() {
     queryKey: ["otcAssets"],
     queryFn: () => getOtcAssets(),
     staleTime: 30 * 60 * 1000,
+    enabled: broker === "iqoption",
   });
 
-  /** Catálogo completo da corretora: OTC primeiro, onde a repetição é comum. */
+  const { data: binollaAssets = [] } = useQuery({
+    queryKey: ["binollaAssets"],
+    queryFn: () => getBinollaAssets(),
+    staleTime: 30 * 60 * 1000,
+    enabled: broker === "binolla",
+  });
+
+  /** Catálogo completo da corretora escolhida: OTC primeiro, onde a repetição é comum. */
   const allAssets = useMemo(() => {
     const merged = new Map<string, { symbol: string; category: string }>();
+    if (broker === "binolla") {
+      for (const a of binollaAssets) {
+        const otc = a.symbol.toUpperCase().endsWith("_OTC");
+        merged.set(a.symbol.toUpperCase(), { symbol: a.symbol, category: otc ? "OTC" : "MERCADO REAL" });
+      }
+      return [...merged.values()]
+        .sort((a, b) =>
+          a.category === b.category ? a.symbol.localeCompare(b.symbol) : a.category === "OTC" ? -1 : 1,
+        )
+        .map((a) => a.symbol);
+    }
     for (const a of otcAssets) {
       merged.set(a.symbol.toUpperCase(), { symbol: a.symbol, category: a.category });
     }
@@ -90,7 +115,7 @@ function MirrorPage() {
         a.category === b.category ? a.symbol.localeCompare(b.symbol) : a.category === "OTC" ? -1 : 1,
       )
       .map((a) => a.symbol);
-  }, [otcAssets]);
+  }, [broker, otcAssets, binollaAssets]);
 
   const running = phase === "collect" || phase === "match";
 
@@ -119,6 +144,7 @@ function MirrorPage() {
       while (!cancelRef.current) {
         const chunk = await mirrorScanChunk({
           data: {
+            broker,
             timeframe: timeframe as "M1" | "M5" | "M15",
             windowSize,
             assets: allAssets.slice(0, 600),
@@ -274,6 +300,22 @@ function MirrorPage() {
 
         <Card className="border-border/50 glass-panel">
           <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-end">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Corretora</label>
+              <div className="flex gap-1.5">
+                {BROKERS.map((b) => (
+                  <Button
+                    key={b.value}
+                    variant={broker === b.value ? "default" : "outline"}
+                    size="sm"
+                    disabled={running}
+                    onClick={() => setBroker(b.value)}
+                  >
+                    {b.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-muted-foreground">Timeframe</label>
               <TimeframeSelector value={timeframe} onChange={setTimeframe} />
