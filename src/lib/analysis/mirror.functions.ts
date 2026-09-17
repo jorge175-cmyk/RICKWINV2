@@ -174,7 +174,8 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
     }
 
     const batch = catalog.slice(data.offset, data.offset + data.limit);
-    const nextOffset = data.offset + batch.length < catalog.length ? data.offset + batch.length : null;
+    const nextOffset =
+      data.offset + batch.length < catalog.length ? data.offset + batch.length : null;
     if (batch.length === 0) return { ...base, nextOffset: null };
 
     try {
@@ -190,6 +191,12 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
           try {
             const history = await loadHistory(fetchCandles, iqName, size, data.historyBlocks);
             if (history.length < data.windowSize + 6) {
+              // Sem isto, uma falha silenciosa de fetchCandles (ex.: sessão da
+              // corretora não sobrevivendo entre requisições) some sem deixar
+              // rastro nos logs - aparece só como "sem histórico suficiente".
+              console.warn(
+                `[mirror] histórico insuficiente para ${iqName}: ${history.length} vela(s)`,
+              );
               skipped.push(label);
               continue;
             }
@@ -197,6 +204,7 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
             processed++;
           } catch (error) {
             if (error instanceof IqOptionBackoffError) throw error;
+            console.error(`[mirror] loadHistory falhou para ${iqName}:`, error);
             skipped.push(label);
           }
           await sleep(120);
