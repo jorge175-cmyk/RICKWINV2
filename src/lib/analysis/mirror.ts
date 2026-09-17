@@ -519,7 +519,7 @@ export function findMatchesFast(
     }
   }
 
-  found.sort((a, b) => b.correlation - a.correlation);
+  found.sort((a, b) => a.maxDeviation - b.maxDeviation || b.correlation - a.correlation);
   const kept: MirrorMatch[] = [];
   for (const match of found) {
     const overlapping = kept.some(
