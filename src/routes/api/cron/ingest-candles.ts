@@ -1,11 +1,31 @@
-// Chamado por um cron agendado no Lovable (ver Cloud > Jobs), uma vez por
-// timeframe: ?timeframe=M1 a cada 1 minuto, ?timeframe=M5 a cada 5 minutos.
-// Cada chamada é uma requisição isolada e auto-contida: abre a sessão com a
-// corretora, busca a vela mais recente fechada de cada ativo, salva no banco
-// e termina — sem tentar reaproveitar a sessão de uma chamada anterior (o
-// Cloudflare Workers não permite isso entre requisições diferentes).
+// Chamado por um cron agendado via pg_cron (SQL puro no Supabase — ver
+// supabase/migrations para o cron.schedule), uma vez por timeframe:
+// ?timeframe=M1 a cada 1 minuto, ?timeframe=M5 a cada 5 minutos. Cada chamada
+// é uma requisição isolada e auto-contida: abre a sessão com a corretora,
+// busca a vela mais recente fechada de cada ativo, salva no banco e termina —
+// sem tentar reaproveitar a sessão de uma chamada anterior (o Cloudflare
+// Workers não permite isso entre requisições diferentes).
+//
+// Autenticação própria (CRON_INGEST_SECRET) em vez de LOVABLE_CRON_SECRET:
+// esse último é gerado e ocultado pelo Lovable para uso exclusivo do painel
+// Cloud > Jobs, então não dá para lê-lo e colar num cron.schedule manual.
 import { createFileRoute } from "@tanstack/react-router";
-import { authenticateCronRequest } from "@/integrations/supabase/cron-auth";
+import { timingSafeEqual, createHash } from "node:crypto";
+
+function authenticateCronRequest(request: Request): Response | null {
+  const secret = process.env["CRON_INGEST_SECRET"];
+  if (!secret) return new Response("Server configuration error", { status: 500 });
+
+  const match = /^Bearer ([^\s,]+)$/.exec(request.headers.get("authorization") ?? "");
+  const token = match?.[1];
+  if (!token) return new Response("Unauthorized", { status: 401 });
+
+  const digest = (value: string) => createHash("sha256").update(value, "utf8").digest();
+  if (!timingSafeEqual(digest(token), digest(secret))) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+  return null;
+}
 
 /** Roda até `limit` tarefas por vez, sem esperar a lista inteira terminar em série. */
 async function mapWithConcurrency<T>(
@@ -27,7 +47,7 @@ export const Route = createFileRoute("/api/cron/ingest-candles")({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const authError = await authenticateCronRequest(request);
+        const authError = authenticateCronRequest(request);
         if (authError) return authError;
 
         const url = new URL(request.url);
