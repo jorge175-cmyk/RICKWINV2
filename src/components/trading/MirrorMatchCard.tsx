@@ -29,7 +29,7 @@ export function MirrorMatchCard({ match, liveWindow }: MirrorMatchCardProps) {
   const invertPrice = match.transform === "PRICE_INVERTED" || match.transform === "BOTH";
   const projection = match.projection ?? [];
   /** Repetição praticamente idêntica: merece destaque visual forte. */
-  const isPerfect = match.similarity >= 99.9;
+  const isPerfect = match.exact === true;
 
   return (
     <Card
