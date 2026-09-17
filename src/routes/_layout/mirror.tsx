@@ -138,14 +138,16 @@ function MirrorPage() {
           skippedTotal += chunk.skippedAssets.length;
           setSkipped(skippedTotal);
         }
-        if (chunk.groups.length > 0) {
-          // Repetições idênticas sempre no topo da lista.
-          const perfectScore = (g: MirrorAssetGroup) =>
-            g.matches.some((m) => m.similarity >= 99.9) ? 1 : 0;
+        // Só entram ativos com replay idêntico: o que é apenas parecido é descartado.
+        const exactGroups: MirrorAssetGroup[] = chunk.groups
+          .map((g) => ({ ...g, matches: g.matches.filter((m) => m.exact) }))
+          .filter((g) => g.matches.length > 0);
+        if (exactGroups.length > 0) {
           setGroups((prev) =>
-            [...prev, ...chunk.groups].sort(
+            [...prev, ...exactGroups].sort(
               (a, b) =>
-                perfectScore(b) - perfectScore(a) ||
+                (a.matches[0]?.maxDeviation ?? Number.POSITIVE_INFINITY) -
+                  (b.matches[0]?.maxDeviation ?? Number.POSITIVE_INFINITY) ||
                 (b.matches[0]?.correlation ?? 0) - (a.matches[0]?.correlation ?? 0),
             ),
           );
