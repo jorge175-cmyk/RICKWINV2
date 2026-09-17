@@ -348,49 +348,40 @@ function MirrorPage() {
           </Card>
         )}
 
-        {(() => {
-          const perfect = groups.filter((g) => g.matches.some((m) => m.similarity >= 99.9));
-          if (perfect.length === 0) return null;
-          return (
-            <Card className="border-2 border-primary bg-primary/10 shadow-lg shadow-primary/20">
-              <CardHeader className="pb-2">
-                <CardTitle className="font-display text-sm font-bold text-primary">
-                  {perfect.length} ativo(s) com repetição 100% idêntica
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {perfect.map((g) => {
-                  const m = g.matches.find((x) => x.similarity >= 99.9)!;
-                  const plan = m.projection.slice(0, 5);
-                  return (
-                    <p key={g.liveAsset} className="text-sm">
-                      <span className="font-display font-bold text-foreground">{g.liveAsset}</span>{" "}
-                      {plan.map((step, i) => (
-                        <span key={step.step}>
-                          {i > 0 && <span className="text-muted-foreground"> · </span>}
-                          <span className={step.direction === "CALL" ? "text-call" : "text-put"}>
-                            {step.direction === "CALL" ? "compra" : "venda"}{" "}
-                            {CLOCK_FMT.format(new Date(step.time * 1000))}
-                          </span>
+        {groups.length > 0 && (
+          <Card className="border-2 border-primary bg-primary/10 shadow-lg shadow-primary/20">
+            <CardHeader className="pb-2">
+              <CardTitle className="font-display text-sm font-bold text-primary">
+                {groups.length} ativo(s) com repetição idêntica
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {groups.map((g) => {
+                const plan = (g.matches[0]?.projection ?? []).slice(0, 5);
+                return (
+                  <p key={g.liveAsset} className="text-sm">
+                    <span className="font-display font-bold text-foreground">{g.liveAsset}</span>{" "}
+                    {plan.map((step, i) => (
+                      <span key={step.step}>
+                        {i > 0 && <span className="text-muted-foreground"> · </span>}
+                        <span className={step.direction === "CALL" ? "text-call" : "text-put"}>
+                          {step.direction === "CALL" ? "compra" : "venda"}{" "}
+                          {CLOCK_FMT.format(new Date(step.time * 1000))}
                         </span>
-                      ))}
-                    </p>
-                  );
-                })}
-              </CardContent>
-            </Card>
-          );
-        })()}
-
+                      </span>
+                    ))}
+                  </p>
+                );
+              })}
+            </CardContent>
+          </Card>
+        )}
 
         {groups.map((group) => {
           const verdict = verdicts[group.liveAsset];
           const loading = pendingVerdict === group.liveAsset;
-          const perfectMatch = group.matches.find((m) => m.similarity >= 99.9);
-          const hasPerfect = perfectMatch != null;
-          /** O plano de operações segue a repetição idêntica quando existe. */
-          const planMatch = perfectMatch ?? group.matches[0];
-          const plan = (planMatch?.projection ?? []).slice(0, 5);
+          const hasPerfect = true; // a lista já contém apenas replays idênticos
+          const plan = (group.matches[0]?.projection ?? []).slice(0, 5);
           return (
             <section key={group.liveAsset} className="space-y-3">
               <div
