@@ -126,7 +126,8 @@ function MirrorPage() {
             offset,
             limit: CHUNK,
             historyBlocks: 2,
-            minCorrelation: 0.93,
+            minCorrelation: 0.995,
+            exactTolerance: 0.05,
             phase: stage,
           },
         });
