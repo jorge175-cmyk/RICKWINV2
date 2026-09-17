@@ -256,7 +256,7 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
         };
       }
 
-      // ---- fase de cruzamento: nenhuma requisição à corretora ----
+      // ---- fase de cruzamento ----
       const groups: MirrorAssetGroup[] = [];
       const skipped: string[] = [];
       let processed = 0;
@@ -268,8 +268,27 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
           continue;
         }
         processed++;
+
+        // A janela ao vivo precisa refletir o instante do cruzamento, não o
+        // instante em que a coleta passou por este ativo — a varredura
+        // inteira pode levar minutos, então reaproveitar o histórico da
+        // coleta aqui gera planos que já nascem no passado (é exatamente o
+        // que estava acontecendo). O histórico arquivado de cada ativo
+        // (`hist.history`, usado como "palheiro" da busca) pode continuar
+        // vindo da coleta normalmente — só a ponta viva precisa ser buscada
+        // de novo, agora, e essa busca é pequena e rápida.
+        let liveCandles: MirrorCandle[];
+        try {
+          liveCandles = await fetchCandles(iqName, size, data.windowSize + 5);
+        } catch (error) {
+          if (error instanceof IqOptionBackoffError) throw error;
+          console.error(`[mirror] falha ao atualizar janela ao vivo de ${iqName}:`, error);
+          skipped.push(iqName);
+          continue;
+        }
+        await sleep(120);
         // A última vela pode estar em formação: só velas fechadas entram.
-        const closed = live.history.slice(0, -1);
+        const closed = liveCandles.slice(0, -1);
         const liveWindow = closed.slice(-(data.windowSize + 1));
         if (liveWindow.length < data.windowSize + 1) continue;
         const liveStart = liveWindow[0]!.time;
