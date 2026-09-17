@@ -126,7 +126,8 @@ function MirrorPage() {
             offset,
             limit: CHUNK,
             historyBlocks: 2,
-            minCorrelation: 0.93,
+            minCorrelation: 0.995,
+            exactTolerance: 0.05,
             phase: stage,
           },
         });
@@ -137,14 +138,16 @@ function MirrorPage() {
           skippedTotal += chunk.skippedAssets.length;
           setSkipped(skippedTotal);
         }
-        if (chunk.groups.length > 0) {
-          // Repetições idênticas sempre no topo da lista.
-          const perfectScore = (g: MirrorAssetGroup) =>
-            g.matches.some((m) => m.similarity >= 99.9) ? 1 : 0;
+        // Só entram ativos com replay idêntico: o que é apenas parecido é descartado.
+        const exactGroups: MirrorAssetGroup[] = chunk.groups
+          .map((g) => ({ ...g, matches: g.matches.filter((m) => m.exact) }))
+          .filter((g) => g.matches.length > 0);
+        if (exactGroups.length > 0) {
           setGroups((prev) =>
-            [...prev, ...chunk.groups].sort(
+            [...prev, ...exactGroups].sort(
               (a, b) =>
-                perfectScore(b) - perfectScore(a) ||
+                (a.matches[0]?.maxDeviation ?? Number.POSITIVE_INFINITY) -
+                  (b.matches[0]?.maxDeviation ?? Number.POSITIVE_INFINITY) ||
                 (b.matches[0]?.correlation ?? 0) - (a.matches[0]?.correlation ?? 0),
             ),
           );
@@ -336,58 +339,49 @@ function MirrorPage() {
         {phase === "done" && groups.length === 0 && (
           <Card className="border-border/50 bg-surface/40">
             <CardContent className="space-y-2 p-6 text-center">
-              <p className="font-display text-sm font-semibold">Nenhuma repetição encontrada</p>
+              <p className="font-display text-sm font-semibold">Nenhum replay idêntico encontrado</p>
               <p className="text-xs text-muted-foreground">
-                Nenhum ativo está repetindo um trecho conhecido agora. Tente outro timeframe ou menos velas
-                comparadas, e repita em instantes.
+                A varredura aceita apenas repetições vela a vela idênticas — o que é só parecido é
+                descartado. Tente outro timeframe ou menos velas comparadas e repita em instantes.
               </p>
             </CardContent>
           </Card>
         )}
 
-        {(() => {
-          const perfect = groups.filter((g) => g.matches.some((m) => m.similarity >= 99.9));
-          if (perfect.length === 0) return null;
-          return (
-            <Card className="border-2 border-primary bg-primary/10 shadow-lg shadow-primary/20">
-              <CardHeader className="pb-2">
-                <CardTitle className="font-display text-sm font-bold text-primary">
-                  {perfect.length} ativo(s) com repetição 100% idêntica
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {perfect.map((g) => {
-                  const m = g.matches.find((x) => x.similarity >= 99.9)!;
-                  const plan = m.projection.slice(0, 5);
-                  return (
-                    <p key={g.liveAsset} className="text-sm">
-                      <span className="font-display font-bold text-foreground">{g.liveAsset}</span>{" "}
-                      {plan.map((step, i) => (
-                        <span key={step.step}>
-                          {i > 0 && <span className="text-muted-foreground"> · </span>}
-                          <span className={step.direction === "CALL" ? "text-call" : "text-put"}>
-                            {step.direction === "CALL" ? "compra" : "venda"}{" "}
-                            {CLOCK_FMT.format(new Date(step.time * 1000))}
-                          </span>
+        {groups.length > 0 && (
+          <Card className="border-2 border-primary bg-primary/10 shadow-lg shadow-primary/20">
+            <CardHeader className="pb-2">
+              <CardTitle className="font-display text-sm font-bold text-primary">
+                {groups.length} ativo(s) com repetição idêntica
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {groups.map((g) => {
+                const plan = (g.matches[0]?.projection ?? []).slice(0, 5);
+                return (
+                  <p key={g.liveAsset} className="text-sm">
+                    <span className="font-display font-bold text-foreground">{g.liveAsset}</span>{" "}
+                    {plan.map((step, i) => (
+                      <span key={step.step}>
+                        {i > 0 && <span className="text-muted-foreground"> · </span>}
+                        <span className={step.direction === "CALL" ? "text-call" : "text-put"}>
+                          {step.direction === "CALL" ? "compra" : "venda"}{" "}
+                          {CLOCK_FMT.format(new Date(step.time * 1000))}
                         </span>
-                      ))}
-                    </p>
-                  );
-                })}
-              </CardContent>
-            </Card>
-          );
-        })()}
-
+                      </span>
+                    ))}
+                  </p>
+                );
+              })}
+            </CardContent>
+          </Card>
+        )}
 
         {groups.map((group) => {
           const verdict = verdicts[group.liveAsset];
           const loading = pendingVerdict === group.liveAsset;
-          const perfectMatch = group.matches.find((m) => m.similarity >= 99.9);
-          const hasPerfect = perfectMatch != null;
-          /** O plano de operações segue a repetição idêntica quando existe. */
-          const planMatch = perfectMatch ?? group.matches[0];
-          const plan = (planMatch?.projection ?? []).slice(0, 5);
+          const hasPerfect = true; // a lista já contém apenas replays idênticos
+          const plan = (group.matches[0]?.projection ?? []).slice(0, 5);
           return (
             <section key={group.liveAsset} className="space-y-3">
               <div

@@ -92,7 +92,10 @@ const chunkSchema = z.object({
   offset: z.number().int().min(0).default(0),
   limit: z.number().int().min(1).max(24).default(10),
   historyBlocks: z.number().int().min(1).max(6).default(2),
-  minCorrelation: z.number().min(0.7).max(0.999).default(0.93),
+  /** Replay exige correlação altíssima; abaixo disso é só "parecido". */
+  minCorrelation: z.number().min(0.99).max(0.9999).default(0.995),
+  /** Desvio máximo tolerado por vela (fração do tamanho típico da vela). */
+  exactTolerance: z.number().min(0.005).max(0.15).default(0.05),
   /**
    * "collect" baixa o histórico deste trecho do catálogo.
    * "match" cruza o trecho atual destes ativos contra TODO o histórico coletado.
@@ -217,16 +220,18 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
           found.push(
             ...findMatchesFast(hist.label, data.timeframe, liveWindow, hist.history, hist.index, {
               minCorrelation: data.minCorrelation,
+              exactOnly: true,
+              exactTolerance: data.exactTolerance,
               maxPerAsset: 3,
               excludeFrom: histName === iqName ? liveStart : undefined,
               projectionSteps: PROJECTION_STEPS,
               stepSeconds: size,
-            }).filter((m) => m.projection.length >= PROJECTION_STEPS),
+            }).filter((m) => m.exact && m.projection.length >= PROJECTION_STEPS),
           );
         }
         if (found.length === 0) continue;
 
-        found.sort((a, b) => b.correlation - a.correlation);
+        found.sort((a, b) => a.maxDeviation - b.maxDeviation || b.correlation - a.correlation);
         const matches = found.slice(0, MAX_MATCHES);
         groups.push({
           liveAsset: live.label,
@@ -236,7 +241,12 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
         });
       }
 
-      groups.sort((a, b) => (b.matches[0]?.correlation ?? 0) - (a.matches[0]?.correlation ?? 0));
+      groups.sort(
+        (a, b) =>
+          (a.matches[0]?.maxDeviation ?? Number.POSITIVE_INFINITY) -
+            (b.matches[0]?.maxDeviation ?? Number.POSITIVE_INFINITY) ||
+          (b.matches[0]?.correlation ?? 0) - (a.matches[0]?.correlation ?? 0),
+      );
 
       return {
         ...base,

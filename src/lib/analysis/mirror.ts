@@ -307,8 +307,10 @@ export function findMatchesInSeries(
   hist: MirrorCandle[],
   options: MirrorSearchOptions = {},
 ): MirrorMatch[] {
-  const minCorrelation = options.minCorrelation ?? 0.93;
-  const tolerance = options.volatilityTolerance ?? 2.4;
+  const exactOnly = options.exactOnly ?? true;
+  const exactTolerance = options.exactTolerance ?? 0.05;
+  const minCorrelation = options.minCorrelation ?? (exactOnly ? 0.995 : 0.93);
+  const tolerance = options.volatilityTolerance ?? (exactOnly ? 1.15 : 2.4);
   const maxPerAsset = options.maxPerAsset ?? 3;
   const steps = Math.max(1, options.projectionSteps ?? 5);
   const stepSeconds = options.stepSeconds ?? inferStepSeconds(live);
@@ -320,7 +322,6 @@ export function findMatchesInSeries(
   if (!(liveVol > 0)) return [];
   const liveLastClose = live[live.length - 1]!.close;
   const liveLastTime = live[live.length - 1]!.time;
-
 
   const found: MirrorMatch[] = [];
 
@@ -340,6 +341,10 @@ export function findMatchesInSeries(
       const candidate = transformReturns(winReturns, transform);
       const r = pearson(liveReturns, candidate);
       if (r < minCorrelation) continue;
+      // Filtro de replay: descarta o que é apenas "parecido".
+      const deviation = replayDeviation(live, window, transform);
+      const exact = deviation <= exactTolerance;
+      if (exactOnly && !exact) continue;
       const projection = projectedPath(hist, start, k + 1, transform, steps);
       if (!projection) continue;
 
@@ -351,6 +356,8 @@ export function findMatchesInSeries(
         transform,
         correlation: r,
         similarity: Math.round(r * 1000) / 10,
+        maxDeviation: deviation,
+        exact,
         startTime: window[0]!.time,
         endTime: last.time,
         volatilityRatio: Math.round(ratio * 100) / 100,
@@ -361,12 +368,11 @@ export function findMatchesInSeries(
         nextCandle: projection.candle,
         projection: buildProjection(projection.path, ratio, liveLastClose, liveLastTime, stepSeconds),
       });
-
     }
   }
 
   // Mantém apenas as melhores e evita janelas praticamente idênticas (vizinhas).
-  found.sort((a, b) => b.correlation - a.correlation);
+  found.sort((a, b) => a.maxDeviation - b.maxDeviation || b.correlation - a.correlation);
   const kept: MirrorMatch[] = [];
   for (const match of found) {
     const overlapping = kept.some(
@@ -425,8 +431,10 @@ export function findMatchesFast(
   index: MirrorSeriesIndex,
   options: MirrorSearchOptions = {},
 ): MirrorMatch[] {
-  const minCorrelation = options.minCorrelation ?? 0.93;
-  const tolerance = options.volatilityTolerance ?? 2.4;
+  const exactOnly = options.exactOnly ?? true;
+  const exactTolerance = options.exactTolerance ?? 0.05;
+  const minCorrelation = options.minCorrelation ?? (exactOnly ? 0.995 : 0.93);
+  const tolerance = options.volatilityTolerance ?? (exactOnly ? 1.15 : 2.4);
   const maxPerAsset = options.maxPerAsset ?? 3;
   const steps = Math.max(1, options.projectionSteps ?? 5);
   const stepSeconds = options.stepSeconds ?? inferStepSeconds(live);
@@ -480,9 +488,14 @@ export function findMatchesFast(
       const r = (dot / k - vStats.mean * winStats.mean) / (vStats.sd * winStats.sd);
       if (!Number.isFinite(r) || r < minCorrelation) continue;
 
+      const window = hist.slice(start, start + k + 1);
+      // Filtro de replay: só passa o que reproduz a vela ao vivo, não o "parecido".
+      const deviation = replayDeviation(live, window, transform);
+      const exact = deviation <= exactTolerance;
+      if (exactOnly && !exact) continue;
+
       const projection = projectedPath(hist, start, k + 1, transform, steps);
       if (!projection) continue;
-      const window = hist.slice(start, start + k + 1);
       const scaled = projection.value / (ratio || 1);
       found.push({
         asset,
@@ -490,6 +503,8 @@ export function findMatchesFast(
         transform,
         correlation: r,
         similarity: Math.round(r * 1000) / 10,
+        maxDeviation: deviation,
+        exact,
         startTime: window[0]!.time,
         endTime: window[window.length - 1]!.time,
         volatilityRatio: Math.round(ratio * 100) / 100,
@@ -504,7 +519,7 @@ export function findMatchesFast(
     }
   }
 
-  found.sort((a, b) => b.correlation - a.correlation);
+  found.sort((a, b) => a.maxDeviation - b.maxDeviation || b.correlation - a.correlation);
   const kept: MirrorMatch[] = [];
   for (const match of found) {
     const overlapping = kept.some(
