@@ -41,41 +41,65 @@ function sleep(ms: number) {
 }
 
 /**
- * Histórico de um ativo: parte do que já está salvo no banco (alimentado a
- * cada minuto/5 minutos por um job em segundo plano — ver
- * src/routes/api/cron/ingest-candles.ts) e só busca na corretora as velas
- * mais novas que ainda não foram vistas. Se o job estiver em dia, isso é
- * normalmente só 1 requisição por ativo em vez de dezenas.
+ * Teto de velas lidas do banco por ativo. O arquivo pode ter muito mais; o que
+ * interessa ao matcher é a janela mais recente, e ler tudo de 400 ativos
+ * estouraria memória e tempo da requisição.
+ */
+const MAX_ARCHIVE_CANDLES = 40_000;
+/** Quando o ativo ainda não tem nada arquivado, busca só um bloco recente. */
+const FIRST_TIME_BLOCKS = 1;
+
+/**
+ * Histórico de um ativo lido do ARQUIVO no banco (preenchido uma vez pelo
+ * arquivamento — ver src/lib/iqoption/backfill.functions.ts — e mantido em dia
+ * pelo job de ingestão). Da corretora só vêm as velas recentes que ainda não
+ * estão salvas: normalmente 1 requisição pequena por ativo, em vez de dezenas
+ * de blocos profundos a cada varredura (era isso que fazia a varredura passar
+ * de 20 minutos).
  */
 async function loadHistory(
   fetchCandles: (name: string, size: number, count: number, to?: number) => Promise<MirrorCandle[]>,
   iqName: string,
   timeframeLabel: string,
   sizeSeconds: number,
-  blocks: number,
+  maxRecentBlocks: number,
 ): Promise<MirrorCandle[]> {
-  const stored = await getStoredCandles(iqName, timeframeLabel);
+  const stored = await getStoredCandles(iqName, timeframeLabel, {
+    maxCandles: MAX_ARCHIVE_CANDLES,
+  });
   const newestStoredTime = stored.length > 0 ? stored[stored.length - 1]!.time : null;
 
   const byTime = new Map<number, MirrorCandle>();
   for (const c of stored) byTime.set(c.time, c);
 
+  const now = Math.floor(Date.now() / 1000);
+  // Só o buraco entre a última vela salva e agora.
+  const missing =
+    newestStoredTime == null
+      ? FIRST_TIME_BLOCKS * BLOCK_SIZE
+      : Math.min(
+          Math.ceil((now - newestStoredTime) / sizeSeconds) + 2,
+          maxRecentBlocks * BLOCK_SIZE,
+        );
+
   const fresh: MirrorCandle[] = [];
-  let to = Math.floor(Date.now() / 1000);
-  for (let i = 0; i < blocks; i++) {
-    const chunk = await fetchCandles(iqName, sizeSeconds, BLOCK_SIZE, i === 0 ? undefined : to);
+  let remaining = missing;
+  let to: number | undefined = undefined;
+  while (remaining > 0) {
+    const count = Math.min(BLOCK_SIZE, remaining);
+    const chunk = await fetchCandles(iqName, sizeSeconds, count, to);
     if (chunk.length === 0) break;
     for (const c of chunk) {
       if (!byTime.has(c.time)) fresh.push(c);
       byTime.set(c.time, c);
     }
     const oldest = chunk[0]!.time;
-    // Bloco já alcançou o que estava salvo: o resto do histórico é conhecido.
+    remaining -= chunk.length;
     if (newestStoredTime != null && oldest <= newestStoredTime) break;
-    if (oldest >= to) break;
+    if (remaining <= 0) break;
     to = oldest - sizeSeconds;
     // Espaçamento entre requisições: evita bloqueio por excesso de acessos.
-    await sleep(250);
+    await sleep(200);
   }
 
   if (fresh.length > 0) {
