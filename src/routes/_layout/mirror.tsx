@@ -13,10 +13,25 @@ import { backfillArchiveChunk } from "@/lib/iqoption/backfill.functions";
 import { mirrorVerdict, type MirrorVerdict } from "@/lib/analysis/mirrorVerdict.functions";
 
 import { toast } from "sonner";
-import { ArrowLeft, Copy, Loader2, Search, Sparkles, StopCircle, Wifi, WifiOff } from "lucide-react";
+import {
+  ArrowLeft,
+  Copy,
+  Loader2,
+  Search,
+  Sparkles,
+  StopCircle,
+  Wifi,
+  WifiOff,
+} from "lucide-react";
 
 const FALLBACK_ASSETS = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CHF", "USD/CAD"];
 const CHUNK = 10;
+/**
+ * O cruzamento lê o arquivo inteiro do banco a cada chamada (não guarda nada
+ * da coleta em memória — ver mirrorScanChunk), então um lote maior aqui
+ * significa remontar essa leitura menos vezes na varredura inteira.
+ */
+const MATCH_CHUNK = 40;
 
 export const Route = createFileRoute("/_layout/mirror")({
   component: MirrorPage,
@@ -50,7 +65,6 @@ type Phase = "idle" | "archive" | "collect" | "match" | "done";
 
 /** Horário local do usuário: é nele que a operação será aberta. */
 const CLOCK_FMT = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" });
-
 
 function MirrorPage() {
   const [timeframe, setTimeframe] = useState("M1");
@@ -90,7 +104,11 @@ function MirrorPage() {
     }
     return [...merged.values()]
       .sort((a, b) =>
-        a.category === b.category ? a.symbol.localeCompare(b.symbol) : a.category === "OTC" ? -1 : 1,
+        a.category === b.category
+          ? a.symbol.localeCompare(b.symbol)
+          : a.category === "OTC"
+            ? -1
+            : 1,
       )
       .map((a) => a.symbol);
   }, [otcAssets]);
@@ -113,6 +131,7 @@ function MirrorPage() {
     setStored({ assets: 0, candles: 0 });
     setProgress({ done: 0, total: allAssets.length });
     let skippedTotal = 0;
+    let collectedTotal = 0;
 
     for (const stage of ["collect", "match"] as const) {
       setPhase(stage);
@@ -126,7 +145,7 @@ function MirrorPage() {
             windowSize,
             assets: allAssets.slice(0, 600),
             offset,
-            limit: CHUNK,
+            limit: stage === "match" ? MATCH_CHUNK : CHUNK,
             // O histórico profundo vem do arquivo salvo no banco; aqui só se
             // busca na corretora o punhado de velas recentes que falta.
             historyBlocks: 2,
@@ -136,10 +155,18 @@ function MirrorPage() {
         });
 
         total = chunk.totalAssets;
-        setStored({ assets: chunk.storedAssets, candles: chunk.storedCandles });
         if (stage === "collect") {
+          // Cada resposta traz só o que foi atualizado NESTA chamada (o
+          // servidor não guarda total nenhum entre chamadas) — o navegador
+          // acumula pra mostrar o progresso da varredura inteira.
+          collectedTotal += chunk.storedAssets;
+          setStored({ assets: collectedTotal, candles: 0 });
           skippedTotal += chunk.skippedAssets.length;
           setSkipped(skippedTotal);
+        } else {
+          // No cruzamento o servidor já devolve o total do catálogo, lido
+          // fresco do banco a cada chamada — não é cumulativo por chamada.
+          setStored({ assets: chunk.storedAssets, candles: chunk.storedCandles });
         }
         if (chunk.groups.length > 0) {
           // Repetições idênticas sempre no topo da lista.
@@ -156,7 +183,7 @@ function MirrorPage() {
         if (chunk.error) {
           setFeed("error");
           toast.error(chunk.error);
-        } else if (chunk.storedCandles > 0) {
+        } else if (chunk.processed > 0) {
           setFeed("ok");
         }
 
@@ -319,10 +346,10 @@ function MirrorPage() {
         <div className="space-y-2">
           <h1 className="font-display text-2xl font-bold">Detector de gráficos repetidos</h1>
           <p className="max-w-3xl text-sm text-muted-foreground">
-            Varre os {allAssets.length || "—"} ativos da corretora de uma vez: baixa o histórico de cada um e
-            cruza o trecho atual de todos contra o passado de todos — mesmo ativo em outra data, outro ativo,
-            lido de trás pra frente ou invertido de cima pra baixo. Onde encontra repetição, mostra qual seria
-            a próxima vela.
+            Varre os {allAssets.length || "—"} ativos da corretora de uma vez: baixa o histórico de
+            cada um e cruza o trecho atual de todos contra o passado de todos — mesmo ativo em outra
+            data, outro ativo, lido de trás pra frente ou invertido de cima pra baixo. Onde encontra
+            repetição, mostra qual seria a próxima vela.
           </p>
         </div>
 
@@ -349,8 +376,16 @@ function MirrorPage() {
               </div>
             </div>
             <div className="flex flex-1 flex-wrap items-end justify-end gap-2">
-              <Button className="gap-2" onClick={() => void runFullScan()} disabled={running || allAssets.length === 0}>
-                {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+              <Button
+                className="gap-2"
+                onClick={() => void runFullScan()}
+                disabled={running || allAssets.length === 0}
+              >
+                {running ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Search className="h-4 w-4" />
+                )}
                 {running ? "Varrendo…" : `Varrer todos os ${allAssets.length || ""} ativos`}
               </Button>
               {running && (
@@ -381,8 +416,14 @@ function MirrorPage() {
               <span>
                 {progress.done} de {progress.total} ativos
               </span>
-              <Badge variant="secondary">{stored.assets} ativos com histórico</Badge>
-              <Badge variant="secondary">{stored.candles.toLocaleString("pt-BR")} velas na memória</Badge>
+              <Badge variant="secondary">
+                {stored.assets} ativos {phase === "collect" ? "atualizados" : "com arquivo"}
+              </Badge>
+              {stored.candles > 0 && (
+                <Badge variant="secondary">
+                  {stored.candles.toLocaleString("pt-BR")} velas no arquivo
+                </Badge>
+              )}
               {skipped > 0 && <span>{skipped} ativo(s) sem histórico suficiente</span>}
             </div>
             <Progress value={pct} className="h-1.5" />
@@ -394,8 +435,8 @@ function MirrorPage() {
             <CardContent className="space-y-2 p-6 text-center">
               <p className="font-display text-sm font-semibold">Nenhuma repetição encontrada</p>
               <p className="text-xs text-muted-foreground">
-                Nenhum ativo está repetindo um trecho conhecido agora. Tente outro timeframe ou menos velas
-                comparadas, e repita em instantes.
+                Nenhum ativo está repetindo um trecho conhecido agora. Tente outro timeframe ou
+                menos velas comparadas, e repita em instantes.
               </p>
             </CardContent>
           </Card>
@@ -435,7 +476,6 @@ function MirrorPage() {
           );
         })()}
 
-
         {groups.map((group) => {
           const verdict = verdicts[group.liveAsset];
           const loading = pendingVerdict === group.liveAsset;
@@ -458,10 +498,14 @@ function MirrorPage() {
                     <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                       Entrar neste ativo
                     </p>
-                    <h2 className="font-display text-2xl font-bold text-foreground">{group.liveAsset}</h2>
+                    <h2 className="font-display text-2xl font-bold text-foreground">
+                      {group.liveAsset}
+                    </h2>
                   </div>
                   {hasPerfect && (
-                    <Badge className="bg-primary text-primary-foreground">Repetição 100% idêntica</Badge>
+                    <Badge className="bg-primary text-primary-foreground">
+                      Repetição 100% idêntica
+                    </Badge>
                   )}
                   <Badge variant="secondary">{group.matches.length} coincidência(s)</Badge>
                   <Badge variant="secondary">{timeframe}</Badge>
@@ -524,8 +568,6 @@ function MirrorPage() {
                 )}
               </div>
 
-
-
               <div className="grid gap-4">
                 {group.matches.map((match) => (
                   <MirrorMatchCard
@@ -566,11 +608,14 @@ function MirrorPage() {
                           <span
                             className={`font-display text-lg font-bold ${verdict.direction === "CALL" ? "text-call" : "text-put"}`}
                           >
-                            {verdict.direction === "CALL" ? "COMPRA" : "VENDA"} · {verdict.confidence}%
+                            {verdict.direction === "CALL" ? "COMPRA" : "VENDA"} ·{" "}
+                            {verdict.confidence}%
                           </span>
                         )}
                       </div>
-                      {verdict.reasoning && <p className="text-sm text-muted-foreground">{verdict.reasoning}</p>}
+                      {verdict.reasoning && (
+                        <p className="text-sm text-muted-foreground">{verdict.reasoning}</p>
+                      )}
                       {verdict.risks.length > 0 && (
                         <ul className="list-inside list-disc space-y-1 text-xs text-muted-foreground">
                           {verdict.risks.map((risk) => (

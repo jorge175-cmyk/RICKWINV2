@@ -2,7 +2,11 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { getIqOptionName, timeframeSeconds } from "@/lib/iqoption/mapping";
-import { getStoredCandles, saveCandles } from "@/lib/iqoption/candleHistory.server";
+import {
+  getStoredCandles,
+  getNewestCandleTime,
+  saveCandles,
+} from "@/lib/iqoption/candleHistory.server";
 import {
   buildSeriesIndex,
   consensusOf,
@@ -38,11 +42,10 @@ const PROJECTION_STEPS = 20;
  */
 const MIN_PROJECTION_STEPS = 5;
 /**
- * Só usado para limpar entradas abandonadas do cache em memória (ex.: um
- * ativo que saiu do catálogo no meio de uma varredura anterior). NÃO controla
- * se um ativo é buscado de novo — isso acontece sempre, a cada varredura.
+ * Concorrência para ler o arquivo do banco na etapa de cruzamento. Mais alta
+ * que SCAN_CONCURRENCY porque é só leitura de banco, sem limite da corretora.
  */
-const STORE_TTL_MS = 25 * 60 * 1000;
+const HAYSTACK_CONCURRENCY = 20;
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -74,12 +77,12 @@ const MAX_ARCHIVE_CANDLES = 40_000;
 const FIRST_TIME_BLOCKS = 1;
 
 /**
- * Histórico de um ativo lido do ARQUIVO no banco (preenchido uma vez pelo
- * arquivamento — ver src/lib/iqoption/backfill.functions.ts — e mantido em dia
- * pelo job de ingestão). Da corretora só vêm as velas recentes que ainda não
- * estão salvas: normalmente 1 requisição pequena por ativo, em vez de dezenas
- * de blocos profundos a cada varredura (era isso que fazia a varredura passar
- * de 20 minutos).
+ * Garante que o banco tenha as velas recentes deste ativo em dia: busca na
+ * corretora só o buraco entre a última vela salva (getNewestCandleTime — uma
+ * linha, não o arquivo inteiro) e agora, e grava o que faltava. Quem lê o
+ * arquivo para comparar é a etapa de cruzamento, direto do banco — nunca
+ * volta pronto daqui, porque manter esse resultado em memória entre chamadas
+ * é exatamente o que causava o bug de dados sumindo (ver mirrorScanChunk).
  */
 async function loadHistory(
   fetchCandles: (name: string, size: number, count: number, to?: number) => Promise<MirrorCandle[]>,
@@ -87,15 +90,8 @@ async function loadHistory(
   timeframeLabel: string,
   sizeSeconds: number,
   maxRecentBlocks: number,
-): Promise<MirrorCandle[]> {
-  const stored = await getStoredCandles(iqName, timeframeLabel, {
-    maxCandles: MAX_ARCHIVE_CANDLES,
-  });
-  const newestStoredTime = stored.length > 0 ? stored[stored.length - 1]!.time : null;
-
-  const byTime = new Map<number, MirrorCandle>();
-  for (const c of stored) byTime.set(c.time, c);
-
+): Promise<void> {
+  const newestStoredTime = await getNewestCandleTime(iqName, timeframeLabel);
   const now = Math.floor(Date.now() / 1000);
   // Só o buraco entre a última vela salva e agora.
   const missing =
@@ -113,10 +109,7 @@ async function loadHistory(
     const count = Math.min(BLOCK_SIZE, remaining);
     const chunk = await fetchCandles(iqName, sizeSeconds, count, to);
     if (chunk.length === 0) break;
-    for (const c of chunk) {
-      if (!byTime.has(c.time)) fresh.push(c);
-      byTime.set(c.time, c);
-    }
+    fresh.push(...chunk);
     const oldest = chunk[0]!.time;
     remaining -= chunk.length;
     if (newestStoredTime != null && oldest <= newestStoredTime) break;
@@ -133,33 +126,13 @@ async function loadHistory(
       fresh.map((c) => ({ ...c, volume: c.volume ?? 0 })),
     );
   }
-  return [...byTime.values()].sort((a, b) => a.time - b.time);
 }
 
+/** Histórico arquivado de um ativo, lido do banco para servir de "palheiro" na busca. */
 interface StoredSeries {
   label: string;
   history: MirrorCandle[];
   index: MirrorSeriesIndex;
-  at: number;
-}
-
-/**
- * Histórico já baixado, reaproveitado entre as etapas da varredura global.
- * Vive no processo do servidor; se for perdido, a etapa de coleta refaz.
- */
-const historyStore = new Map<string, Map<string, StoredSeries>>();
-
-function storeFor(timeframe: string): Map<string, StoredSeries> {
-  let bucket = historyStore.get(timeframe);
-  if (!bucket) {
-    bucket = new Map();
-    historyStore.set(timeframe, bucket);
-  }
-  const cutoff = Date.now() - STORE_TTL_MS;
-  for (const [key, value] of bucket) {
-    if (value.at < cutoff) bucket.delete(key);
-  }
-  return bucket;
 }
 
 /** Catálogo normalizado (nomes reconhecidos pela corretora, sem repetição). */
@@ -181,7 +154,10 @@ const chunkSchema = z.object({
   /** Catálogo completo de ativos da corretora. */
   assets: z.array(z.string()).min(1).max(600),
   offset: z.number().int().min(0).default(0),
-  limit: z.number().int().min(1).max(24).default(10),
+  // O cruzamento remonta o palheiro inteiro do banco a cada chamada (ver
+  // mirrorScanChunk), então um lote maior nessa fase significa menos vezes
+  // repetindo essa leitura no total da varredura.
+  limit: z.number().int().min(1).max(50).default(10),
   // Teto de blocos RECENTES buscados na corretora por ativo. O histórico
   // profundo vem do arquivo no banco (backfillArchiveChunk), então aqui só se
   // cobre o buraco entre a última vela salva e agora — 2 blocos já bastam.
@@ -206,7 +182,11 @@ export interface MirrorChunkResult {
   groups: MirrorAssetGroup[];
   /** Ativos processados nesta chamada. */
   processed: number;
-  /** Ativos com histórico disponível na memória da varredura. */
+  /**
+   * Na coleta: ativos atualizados NESTA chamada (o navegador acumula entre
+   * chamadas). No cruzamento: total de ativos com arquivo suficiente no
+   * banco NESTE MOMENTO — lido fresco a cada chamada, por isso é estável.
+   */
   storedAssets: number;
   storedCandles: number;
   skippedAssets: string[];
@@ -229,20 +209,13 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
     const { fetchCandles, IqOptionBackoffError } = await import("@/lib/iqoption/iqoption.server");
     const size = timeframeSeconds(data.timeframe);
     const catalog = buildCatalog(data.assets);
-    const store = storeFor(data.timeframe);
-
-    const countCandles = () => {
-      let total = 0;
-      for (const s of store.values()) total += s.history.length;
-      return total;
-    };
 
     const base: MirrorChunkResult = {
       phase: data.phase,
       groups: [],
       processed: 0,
-      storedAssets: store.size,
-      storedCandles: countCandles(),
+      storedAssets: 0,
+      storedCandles: 0,
       skippedAssets: [],
       nextOffset: null,
       totalAssets: catalog.length,
@@ -262,30 +235,8 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
         const skipped: string[] = [];
         let processed = 0;
         await mapWithConcurrency(batch, SCAN_CONCURRENCY, async ({ iqName, label }) => {
-          // Sempre busca de novo, mesmo se este ativo já está no cache: cada
-          // varredura precisa refletir as velas mais recentes no momento em
-          // que o usuário clicou, não o que estava ao vivo há minutos atrás
-          // (loadHistory é barata para isso — só busca na corretora o que
-          // ainda não está salvo no banco).
           try {
-            const history = await loadHistory(
-              fetchCandles,
-              iqName,
-              data.timeframe,
-              size,
-              data.historyBlocks,
-            );
-            if (history.length < data.windowSize + 6) {
-              // Sem isto, uma falha silenciosa de fetchCandles (ex.: sessão da
-              // corretora não sobrevivendo entre requisições) some sem deixar
-              // rastro nos logs - aparece só como "sem histórico suficiente".
-              console.warn(
-                `[mirror] histórico insuficiente para ${iqName}: ${history.length} vela(s)`,
-              );
-              skipped.push(label);
-              return;
-            }
-            store.set(iqName, { label, history, index: buildSeriesIndex(history), at: Date.now() });
+            await loadHistory(fetchCandles, iqName, data.timeframe, size, data.historyBlocks);
             processed++;
           } catch (error) {
             if (error instanceof IqOptionBackoffError) throw error;
@@ -296,34 +247,47 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
         return {
           ...base,
           processed,
-          storedAssets: store.size,
-          storedCandles: countCandles(),
+          storedAssets: processed,
           skippedAssets: skipped,
           nextOffset,
         };
       }
 
       // ---- fase de cruzamento ----
+      // O "palheiro" (histórico arquivado de cada ativo) é lido direto do
+      // banco A CADA CHAMADA, nunca de um cache em memória entre chamadas: o
+      // Cloudflare Workers pode atender cada requisição num isolado
+      // diferente, e um Map de módulo não sobrevive de forma confiável de uma
+      // chamada para a outra — a mesma restrição por trás do bug de socket
+      // corrigido antes, só que aqui sem lançar erro nenhum: os dados só
+      // desapareciam em silêncio (por isso "9 ativos com histórico" mesmo
+      // depois de centenas processados, e o contador às vezes até diminuindo).
+      const haystack = new Map<string, StoredSeries>();
+      await mapWithConcurrency(catalog, HAYSTACK_CONCURRENCY, async ({ iqName, label }) => {
+        const history = await getStoredCandles(iqName, data.timeframe, {
+          maxCandles: MAX_ARCHIVE_CANDLES,
+        });
+        if (history.length < data.windowSize + 6) return;
+        haystack.set(iqName, { label, history, index: buildSeriesIndex(history) });
+      });
+      let haystackCandles = 0;
+      for (const s of haystack.values()) haystackCandles += s.history.length;
+
       const groups: MirrorAssetGroup[] = [];
       const skipped: string[] = [];
       let processed = 0;
 
-      await mapWithConcurrency(batch, SCAN_CONCURRENCY, async ({ iqName }) => {
-        const live = store.get(iqName);
-        if (!live) {
+      await mapWithConcurrency(batch, SCAN_CONCURRENCY, async ({ iqName, label }) => {
+        if (!haystack.has(iqName)) {
           skipped.push(iqName);
           return;
         }
         processed++;
 
         // A janela ao vivo precisa refletir o instante do cruzamento, não o
-        // instante em que a coleta passou por este ativo — a varredura
-        // inteira pode levar minutos, então reaproveitar o histórico da
-        // coleta aqui gera planos que já nascem no passado (é exatamente o
-        // que estava acontecendo). O histórico arquivado de cada ativo
-        // (`hist.history`, usado como "palheiro" da busca) pode continuar
-        // vindo da coleta normalmente — só a ponta viva precisa ser buscada
-        // de novo, agora, e essa busca é pequena e rápida.
+        // instante em que o arquivo foi lido — busca sempre fresca, pequena e
+        // rápida (o "palheiro" que acabou de ser montado é que pode ser mais
+        // antigo, e tudo bem, ele é o passado contra o qual comparamos).
         let liveCandles: MirrorCandle[];
         try {
           liveCandles = await fetchCandles(iqName, size, data.windowSize + 5);
@@ -340,7 +304,7 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
         const liveStart = liveWindow[0]!.time;
 
         const found: MirrorMatch[] = [];
-        for (const [histName, hist] of store) {
+        for (const [histName, hist] of haystack) {
           found.push(
             ...findMatchesFast(hist.label, data.timeframe, liveWindow, hist.history, hist.index, {
               minCorrelation: data.minCorrelation,
@@ -356,7 +320,7 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
         found.sort((a, b) => b.correlation - a.correlation);
         const matches = found.slice(0, MAX_MATCHES);
         groups.push({
-          liveAsset: live.label,
+          liveAsset: label,
           liveWindow,
           matches,
           consensus: consensusOf(matches),
@@ -369,8 +333,8 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
         ...base,
         groups,
         processed,
-        storedAssets: store.size,
-        storedCandles: countCandles(),
+        storedAssets: haystack.size,
+        storedCandles: haystackCandles,
         skippedAssets: skipped,
         nextOffset,
       };
