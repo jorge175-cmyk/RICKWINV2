@@ -47,39 +47,75 @@ export type Database = {
         }
         Relationships: []
       }
-      iqoption_candles: {
+      iqoption_candle_coverage: {
         Row: {
           asset: string
+          blocks_fetched: number
+          complete: boolean
+          created_at: string
+          last_error: string | null
+          newest_time: number | null
+          oldest_time: number | null
           timeframe: string
-          time: number
-          open: number
-          high: number
-          low: number
-          close: number
-          volume: number
           updated_at: string
         }
         Insert: {
           asset: string
+          blocks_fetched?: number
+          complete?: boolean
+          created_at?: string
+          last_error?: string | null
+          newest_time?: number | null
+          oldest_time?: number | null
           timeframe: string
-          time: number
-          open: number
-          high: number
-          low: number
-          close: number
-          volume?: number
           updated_at?: string
         }
         Update: {
           asset?: string
+          blocks_fetched?: number
+          complete?: boolean
+          created_at?: string
+          last_error?: string | null
+          newest_time?: number | null
+          oldest_time?: number | null
           timeframe?: string
-          time?: number
-          open?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      iqoption_candles: {
+        Row: {
+          asset: string
+          close: number
+          high: number
+          low: number
+          open: number
+          time: number
+          timeframe: string
+          updated_at: string
+          volume: number
+        }
+        Insert: {
+          asset: string
+          close: number
+          high: number
+          low: number
+          open: number
+          time: number
+          timeframe: string
+          updated_at?: string
+          volume?: number
+        }
+        Update: {
+          asset?: string
+          close?: number
           high?: number
           low?: number
-          close?: number
-          volume?: number
+          open?: number
+          time?: number
+          timeframe?: string
           updated_at?: string
+          volume?: number
         }
         Relationships: []
       }

@@ -9,6 +9,7 @@ import { TimeframeSelector } from "@/components/trading/TimeframeSelector";
 import { MirrorMatchCard } from "@/components/trading/MirrorMatchCard";
 import { getOtcAssets } from "@/lib/iqoption/candles.functions";
 import { mirrorScanChunk, type MirrorAssetGroup } from "@/lib/analysis/mirror.functions";
+import { backfillArchiveChunk } from "@/lib/iqoption/backfill.functions";
 import { mirrorVerdict, type MirrorVerdict } from "@/lib/analysis/mirrorVerdict.functions";
 
 import { toast } from "sonner";
@@ -45,7 +46,7 @@ const VERDICT_LABEL: Record<MirrorVerdict["verdict"], string> = {
   SEM_REPETICAO: "Sem repetição",
 };
 
-type Phase = "idle" | "collect" | "match" | "done";
+type Phase = "idle" | "archive" | "collect" | "match" | "done";
 
 /** Horário local do usuário: é nele que a operação será aberta. */
 const CLOCK_FMT = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" });
@@ -61,6 +62,8 @@ function MirrorPage() {
   const [groups, setGroups] = useState<MirrorAssetGroup[]>([]);
   const [verdicts, setVerdicts] = useState<Record<string, MirrorVerdict>>({});
   const [pendingVerdict, setPendingVerdict] = useState<string | null>(null);
+  /** Progresso do arquivamento do histórico completo no banco. */
+  const [archive, setArchive] = useState({ done: 0, total: 0, candles: 0, complete: 0 });
   const cancelRef = useRef(false);
   /**
    * A varredura não usa o canal ao vivo do navegador: o histórico é buscado no
@@ -124,11 +127,9 @@ function MirrorPage() {
             assets: allAssets.slice(0, 600),
             offset,
             limit: CHUNK,
-            // Máximo permitido pelo schema: a coleta já para sozinha quando a
-            // corretora não tem mais velas, então isso puxa o histórico mais
-            // profundo disponível por ativo, sem excesso de acessos nos que
-            // têm pouco histórico.
-            historyBlocks: 20,
+            // O histórico profundo vem do arquivo salvo no banco; aqui só se
+            // busca na corretora o punhado de velas recentes que falta.
+            historyBlocks: 2,
             minCorrelation: 0.93,
             phase: stage,
           },
@@ -169,6 +170,59 @@ function MirrorPage() {
 
     setPhase(cancelRef.current ? "idle" : "done");
     if (!cancelRef.current) toast.success("Varredura concluída.");
+  };
+
+  /**
+   * Baixa e salva no banco todo o histórico disponível de cada ativo, por ativo
+   * e horário. Só precisa rodar uma vez por timeframe: depois cada ativo já
+   * arquivado é pulado, e a varredura de replay passa a buscar na corretora
+   * apenas as velas recentes que faltam.
+   */
+  const runArchive = async () => {
+    if (allAssets.length === 0) {
+      toast.error("Catálogo de ativos ainda carregando.");
+      return;
+    }
+    cancelRef.current = false;
+    setPhase("archive");
+    setFeed("ok");
+    setArchive({ done: 0, total: allAssets.length, candles: 0, complete: 0 });
+    let offset = 0;
+    let candles = 0;
+    let complete = 0;
+
+    while (!cancelRef.current) {
+      const chunk = await backfillArchiveChunk({
+        data: {
+          timeframe: timeframe as "M1" | "M5" | "M15",
+          assets: allAssets.slice(0, 600),
+          offset,
+          limit: 4,
+          blocksPerAsset: 8,
+        },
+      });
+      candles += chunk.savedCandles;
+      complete += chunk.completed + chunk.skipped;
+      const next = chunk.nextOffset;
+      setArchive({
+        done: next ?? chunk.totalAssets,
+        total: chunk.totalAssets,
+        candles,
+        complete,
+      });
+      if (chunk.error) {
+        setFeed("error");
+        toast.error(chunk.error);
+        break;
+      }
+      if (next == null) break;
+      offset = next;
+    }
+
+    setPhase("idle");
+    if (!cancelRef.current) {
+      toast.success(`Arquivo atualizado: ${candles.toLocaleString("pt-BR")} velas salvas.`);
+    }
   };
 
   const askAi = async (group: MirrorAssetGroup) => {
