@@ -22,6 +22,13 @@ import {
 const BLOCK_SIZE = 1000;
 /** Espaçamento entre requisições: evita bloqueio por excesso de acessos (429). */
 const REQUEST_GAP_MS = 200;
+/**
+ * Ativos processados em paralelo por chamada. Cada um abre sua própria sessão
+ * isolada (ver iqoption.server.ts), então processar vários ao mesmo tempo é
+ * seguro — sem isso, arquivar o catálogo inteiro (centenas de ativos, cada um
+ * com vários blocos sequenciais) levaria muito tempo.
+ */
+const BACKFILL_CONCURRENCY = 6;
 
 const schema = z.object({
   timeframe: z.enum(["M1", "M5", "M15"]),
@@ -51,6 +58,22 @@ export interface BackfillChunkResult {
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+/** Roda até `limit` tarefas por vez, sem esperar a lista inteira terminar em série. */
+async function mapWithConcurrency<T>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  let index = 0;
+  async function worker() {
+    while (index < items.length) {
+      const current = items[index++]!;
+      await fn(current);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()));
 }
 
 function buildCatalog(assets: string[]): Array<{ iqName: string }> {
@@ -100,60 +123,68 @@ export const backfillArchiveChunk = createServerFn({ method: "POST" })
     let processed = 0;
 
     try {
-      for (const { iqName } of batch) {
+      await mapWithConcurrency(batch, BACKFILL_CONCURRENCY, async ({ iqName }) => {
         const current: CandleCoverage | undefined = coverage.get(iqName);
         if (current?.complete) {
           skipped++;
-          continue;
-        }
-        processed++;
-
-        // Continua de onde parou: do bloco imediatamente anterior à vela mais
-        // antiga já arquivada. Primeira vez começa em "agora".
-        let to = current?.oldestTime != null ? current.oldestTime - size : Math.floor(Date.now() / 1000);
-        let oldest = current?.oldestTime ?? null;
-        let newest = current?.newestTime ?? null;
-        let blocks = current?.blocksFetched ?? 0;
-        let done = false;
-
-        for (let i = 0; i < data.blocksPerAsset; i++) {
-          const chunk = await fetchCandles(iqName, size, BLOCK_SIZE, to);
-          if (chunk.length === 0) {
-            done = true;
-            break;
-          }
-          await saveCandles(
-            iqName,
-            data.timeframe,
-            chunk.map((c) => ({ ...c, volume: c.volume ?? 0 })),
-          );
-          savedCandles += chunk.length;
-          blocks++;
-
-          const chunkOldest = chunk[0]!.time;
-          const chunkNewest = chunk[chunk.length - 1]!.time;
-          if (oldest == null || chunkOldest < oldest) oldest = chunkOldest;
-          if (newest == null || chunkNewest > newest) newest = chunkNewest;
-
-          // Corretora não tem mais nada antes disso: arquivo completo.
-          if (chunkOldest >= to || chunk.length < BLOCK_SIZE / 2) {
-            done = true;
-            break;
-          }
-          to = chunkOldest - size;
-          await sleep(REQUEST_GAP_MS);
+          return;
         }
 
-        await saveCoverage(iqName, data.timeframe, {
-          oldestTime: oldest,
-          newestTime: newest,
-          blocksFetched: blocks,
-          complete: done,
-          lastError: null,
-        });
-        if (done) completed++;
-        await sleep(REQUEST_GAP_MS);
-      }
+        try {
+          // Continua de onde parou: do bloco imediatamente anterior à vela
+          // mais antiga já arquivada. Primeira vez começa em "agora".
+          let to =
+            current?.oldestTime != null ? current.oldestTime - size : Math.floor(Date.now() / 1000);
+          let oldest = current?.oldestTime ?? null;
+          let newest = current?.newestTime ?? null;
+          let blocks = current?.blocksFetched ?? 0;
+          let done = false;
+
+          for (let i = 0; i < data.blocksPerAsset; i++) {
+            const chunk = await fetchCandles(iqName, size, BLOCK_SIZE, to);
+            if (chunk.length === 0) {
+              done = true;
+              break;
+            }
+            await saveCandles(
+              iqName,
+              data.timeframe,
+              chunk.map((c) => ({ ...c, volume: c.volume ?? 0 })),
+            );
+            savedCandles += chunk.length;
+            blocks++;
+
+            const chunkOldest = chunk[0]!.time;
+            const chunkNewest = chunk[chunk.length - 1]!.time;
+            if (oldest == null || chunkOldest < oldest) oldest = chunkOldest;
+            if (newest == null || chunkNewest > newest) newest = chunkNewest;
+
+            // Corretora não tem mais nada antes disso: arquivo completo.
+            if (chunkOldest >= to || chunk.length < BLOCK_SIZE / 2) {
+              done = true;
+              break;
+            }
+            to = chunkOldest - size;
+            await sleep(REQUEST_GAP_MS);
+          }
+
+          await saveCoverage(iqName, data.timeframe, {
+            oldestTime: oldest,
+            newestTime: newest,
+            blocksFetched: blocks,
+            complete: done,
+            lastError: null,
+          });
+          processed++;
+          if (done) completed++;
+        } catch (error) {
+          // Falha de UM ativo (ex.: nome não reconhecido pela corretora) não
+          // pode abortar o lote inteiro — só esse ativo fica pra tentar de novo.
+          if (error instanceof IqOptionBackoffError) throw error;
+          console.error(`[backfill] falhou para ${iqName}:`, error);
+          skipped++;
+        }
+      });
     } catch (error) {
       console.error("[backfill] falhou", error);
       const message =

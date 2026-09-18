@@ -14,6 +14,7 @@ import { mirrorVerdict, type MirrorVerdict } from "@/lib/analysis/mirrorVerdict.
 
 import { toast } from "sonner";
 import {
+  Archive,
   ArrowLeft,
   Copy,
   Loader2,
@@ -114,6 +115,9 @@ function MirrorPage() {
   }, [otcAssets]);
 
   const running = phase === "collect" || phase === "match";
+  const archiving = phase === "archive";
+  /** Varredura e arquivamento não podem rodar ao mesmo tempo (competem pela mesma corretora). */
+  const busy = running || archiving;
 
   /** Varre o catálogo inteiro: coleta o histórico de todos e cruza todos contra todos. */
   const runFullScan = async () => {
@@ -292,6 +296,7 @@ function MirrorPage() {
   };
 
   const pct = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
+  const archivePct = archive.total > 0 ? Math.round((archive.done / archive.total) * 100) : 0;
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -367,7 +372,7 @@ function MirrorPage() {
                     key={size}
                     variant={windowSize === size ? "default" : "outline"}
                     size="sm"
-                    disabled={running}
+                    disabled={busy}
                     onClick={() => setWindowSize(size)}
                   >
                     {size}
@@ -377,9 +382,23 @@ function MirrorPage() {
             </div>
             <div className="flex flex-1 flex-wrap items-end justify-end gap-2">
               <Button
+                variant="outline"
+                className="gap-2"
+                onClick={() => void runArchive()}
+                disabled={busy || allAssets.length === 0}
+                title="Baixa todo o histórico disponível de cada ativo de uma vez. Roda uma única vez por timeframe — depois disso, as varreduras ficam consistentemente rápidas."
+              >
+                {archiving ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Archive className="h-4 w-4" />
+                )}
+                {archiving ? "Arquivando…" : "Arquivar histórico completo"}
+              </Button>
+              <Button
                 className="gap-2"
                 onClick={() => void runFullScan()}
-                disabled={running || allAssets.length === 0}
+                disabled={busy || allAssets.length === 0}
               >
                 {running ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -388,7 +407,7 @@ function MirrorPage() {
                 )}
                 {running ? "Varrendo…" : `Varrer todos os ${allAssets.length || ""} ativos`}
               </Button>
-              {running && (
+              {busy && (
                 <Button
                   variant="outline"
                   className="gap-2"
@@ -402,6 +421,22 @@ function MirrorPage() {
             </div>
           </CardContent>
         </Card>
+
+        {archiving && (
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+              <Badge variant="secondary">Arquivando histórico completo</Badge>
+              <span>
+                {archive.done} de {archive.total} ativos
+              </span>
+              <Badge variant="secondary">{archive.complete} ativo(s) com arquivo completo</Badge>
+              <Badge variant="secondary">
+                {archive.candles.toLocaleString("pt-BR")} velas salvas nesta sessão
+              </Badge>
+            </div>
+            <Progress value={archivePct} className="h-1.5" />
+          </div>
+        )}
 
         {(running || phase === "done") && (
           <div className="space-y-2">
