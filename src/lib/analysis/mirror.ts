@@ -149,8 +149,6 @@ function replayDeviation(
   return worst;
 }
 
-
-
 const TRANSFORMS: MirrorTransform[] = ["DIRECT", "TIME_REVERSED", "PRICE_INVERTED", "BOTH"];
 
 /** Duração da vela deduzida dos horários da janela ao vivo (fallback: 60s). */
@@ -159,7 +157,6 @@ export function inferStepSeconds(candles: MirrorCandle[]): number {
   const diff = candles[candles.length - 1]!.time - candles[candles.length - 2]!.time;
   return diff > 0 ? diff : 60;
 }
-
 
 /** Retornos percentuais entre fechamentos consecutivos. */
 export function closeReturns(candles: MirrorCandle[]): number[] {
@@ -228,7 +225,11 @@ function transformReturns(returns: number[], transform: MirrorTransform): number
 }
 
 /** Índice da vela que representa a "próxima" da sequência, conforme a leitura. */
-function nextIndexFor(startIndex: number, windowLength: number, transform: MirrorTransform): number {
+function nextIndexFor(
+  startIndex: number,
+  windowLength: number,
+  transform: MirrorTransform,
+): number {
   const readsBackwards = transform === "TIME_REVERSED" || transform === "BOTH";
   return readsBackwards ? startIndex - 1 : startIndex + windowLength;
 }
@@ -243,7 +244,11 @@ function projectedPath(
   windowLength: number,
   transform: MirrorTransform,
   steps: number,
-): { value: number; candle: MirrorCandle; path: Array<{ ret: number; source: MirrorCandle }> } | null {
+): {
+  value: number;
+  candle: MirrorCandle;
+  path: Array<{ ret: number; source: MirrorCandle }>;
+} | null {
   const readsBackwards = transform === "TIME_REVERSED" || transform === "BOTH";
   const firstIdx = nextIndexFor(startIndex, windowLength, transform);
   const first = hist[firstIdx];
@@ -295,7 +300,6 @@ function buildProjection(
   return out;
 }
 
-
 /**
  * Varre um histórico procurando janelas parecidas com a janela ao vivo.
  * `live` deve conter as últimas velas fechadas (k+1 velas → k retornos).
@@ -322,7 +326,6 @@ export function findMatchesInSeries(
   if (!(liveVol > 0)) return [];
   const liveLastClose = live[live.length - 1]!.close;
   const liveLastTime = live[live.length - 1]!.time;
-
 
   const found: MirrorMatch[] = [];
 
@@ -366,9 +369,14 @@ export function findMatchesInSeries(
         projectedClose: liveLastClose * (1 + scaled),
         window,
         nextCandle: projection.candle,
-        projection: buildProjection(projection.path, ratio, liveLastClose, liveLastTime, stepSeconds),
+        projection: buildProjection(
+          projection.path,
+          ratio,
+          liveLastClose,
+          liveLastTime,
+          stepSeconds,
+        ),
       });
-
     }
   }
 
@@ -377,7 +385,9 @@ export function findMatchesInSeries(
   const kept: MirrorMatch[] = [];
   for (const match of found) {
     const overlapping = kept.some(
-      (m) => m.transform === match.transform && Math.abs(m.startTime - match.startTime) < (match.endTime - match.startTime) / 2,
+      (m) =>
+        m.transform === match.transform &&
+        Math.abs(m.startTime - match.startTime) < (match.endTime - match.startTime) / 2,
     );
     if (overlapping) continue;
     kept.push(match);
@@ -454,12 +464,20 @@ export function findMatchesFast(
   const liveLastClose = live[live.length - 1]!.close;
   const liveLastTime = live[live.length - 1]!.time;
 
-
   // Transforma a janela ao vivo (não o histórico): 4 vetores fixos por ativo.
-  const variants = TRANSFORMS.map((transform) => ({
-    transform,
-    vector: Float64Array.from(transformReturns(liveReturns, transform)),
-  }));
+  // As estatísticas de cada vetor (vStats) não dependem da posição no
+  // histórico — calcular UMA VEZ aqui, fora do loop de posições, é o que
+  // torna esse caminho "rápido"; calcular de novo a cada posição (como
+  // estava antes) triplicava o trabalho à toa em cada busca.
+  const variants = TRANSFORMS.map((transform) => {
+    const vector = Float64Array.from(transformReturns(liveReturns, transform));
+    const vStats = popStats(
+      vector.reduce((a, v) => a + v, 0),
+      vector.reduce((a, v) => a + v * v, 0),
+      k,
+    );
+    return { transform, vector, vStats };
+  }).filter((v) => v.vStats.sd > 0);
 
   const found: MirrorMatch[] = [];
   const rets = index.rets;
@@ -476,16 +494,10 @@ export function findMatchesFast(
     const ratio = winStats.sd / liveStats.sd;
     if (ratio > tolerance || ratio < 1 / tolerance) continue;
 
-    for (const { transform, vector } of variants) {
+    for (const { transform, vector, vStats } of variants) {
       // r = (E[xy] - mx·my) / (sx·sy) — mesma escala do Pearson clássico.
       let dot = 0;
       for (let j = 0; j < k; j++) dot += vector[j]! * rets[from + j]!;
-      const vStats = popStats(
-        vector.reduce((a, v) => a + v, 0),
-        vector.reduce((a, v) => a + v * v, 0),
-        k,
-      );
-      if (!(vStats.sd > 0)) continue;
       const r = (dot / k - vStats.mean * winStats.mean) / (vStats.sd * winStats.sd);
       if (!Number.isFinite(r) || r < minCorrelation) continue;
 
@@ -512,9 +524,14 @@ export function findMatchesFast(
         projectedClose: liveLastClose * (1 + scaled),
         window,
         nextCandle: projection.candle,
-        projection: buildProjection(projection.path, ratio, liveLastClose, liveLastTime, stepSeconds),
+        projection: buildProjection(
+          projection.path,
+          ratio,
+          liveLastClose,
+          liveLastTime,
+          stepSeconds,
+        ),
       });
-
     }
   }
 

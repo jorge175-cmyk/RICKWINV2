@@ -28,11 +28,14 @@ import {
 const FALLBACK_ASSETS = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CHF", "USD/CAD"];
 const CHUNK = 10;
 /**
- * O cruzamento lê o arquivo inteiro do banco a cada chamada (não guarda nada
- * da coleta em memória — ver mirrorScanChunk), então um lote maior aqui
- * significa remontar essa leitura menos vezes na varredura inteira.
+ * Ativos ao vivo comparados por chamada na etapa de cruzamento. O custo de
+ * CPU dessa etapa é (ativos aqui) × (ativos no palheiro) × (velas por ativo)
+ * — com o palheiro cobrindo o catálogo inteiro (~200+ ativos), um lote de 40
+ * chegava a bilhões de operações numa chamada só e o Cloudflare Workers
+ * matava a requisição por "exceeded CPU time limit" (travava em 0%). 5 é
+ * suficientemente pequeno para caber com folga, ao custo de mais chamadas.
  */
-const MATCH_CHUNK = 40;
+const MATCH_CHUNK = 5;
 
 export const Route = createFileRoute("/_layout/mirror")({
   component: MirrorPage,

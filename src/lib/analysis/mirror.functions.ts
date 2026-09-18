@@ -158,10 +158,10 @@ const chunkSchema = z.object({
   /** Catálogo completo de ativos da corretora. */
   assets: z.array(z.string()).min(1).max(600),
   offset: z.number().int().min(0).default(0),
-  // O cruzamento remonta o palheiro inteiro do banco a cada chamada (ver
-  // mirrorScanChunk), então um lote maior nessa fase significa menos vezes
-  // repetindo essa leitura no total da varredura.
-  limit: z.number().int().min(1).max(50).default(10),
+  // Teto de segurança: o custo de CPU do cruzamento é (ativos deste lote) ×
+  // (ativos no palheiro) × (velas por ativo) — ver MATCH_CHUNK em mirror.tsx,
+  // que é quem realmente controla o tamanho do lote nessa fase.
+  limit: z.number().int().min(1).max(24).default(10),
   // Teto de blocos RECENTES buscados na corretora por ativo. O histórico
   // profundo vem do arquivo no banco (backfillArchiveChunk), então aqui só se
   // cobre o buraco entre a última vela salva e agora — 2 blocos já bastam.
