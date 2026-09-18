@@ -16,6 +16,14 @@ import {
 const BLOCK_SIZE = 500;
 const MAX_MATCHES = 8;
 /**
+ * Quantos ativos processar em paralelo por etapa. Antes, cada ativo abria sua
+ * conexão e esperava a anterior terminar — agora que cada chamada já abre sua
+ * própria sessão isolada (ver iqoption.server.ts), processar vários ao mesmo
+ * tempo é seguro (tudo dentro da mesma requisição) e evita que a varredura
+ * inteira demore minutos só por ir um ativo de cada vez.
+ */
+const SCAN_CONCURRENCY = 6;
+/**
  * Quantas velas à frente CADA coincidência tenta projetar. Alto de propósito:
  * a varredura completa (coleta + cruzamento) pode levar minutos, então o plano
  * precisa ter fôlego para ainda ter velas no futuro quando o resultado aparece.
@@ -38,6 +46,22 @@ const STORE_TTL_MS = 25 * 60 * 1000;
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+/** Roda até `limit` tarefas por vez, sem esperar a lista inteira terminar em série. */
+async function mapWithConcurrency<T>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  let index = 0;
+  async function worker() {
+    while (index < items.length) {
+      const current = items[index++]!;
+      await fn(current);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()));
 }
 
 /**
@@ -170,9 +194,10 @@ export interface MirrorChunkResult {
 
 /**
  * Uma etapa da varredura global. O navegador chama em sequência até cobrir todo
- * o catálogo: primeiro coletando o histórico de todos os ativos (sempre fresco
- * na corretora, nada fica em banco), depois cruzando cada ativo ao vivo contra
- * o histórico de TODOS os outros — só assim a comparação é simétrica e completa.
+ * o catálogo: primeiro coletando o histórico de todos os ativos (do banco,
+ * completando na corretora só o que falta), depois cruzando cada ativo ao vivo
+ * contra o histórico de TODOS os outros — só assim a comparação é simétrica e
+ * completa. Cada chamada processa até `SCAN_CONCURRENCY` ativos em paralelo.
  */
 export const mirrorScanChunk = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -213,7 +238,7 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
       if (data.phase === "collect") {
         const skipped: string[] = [];
         let processed = 0;
-        for (const { iqName, label } of batch) {
+        await mapWithConcurrency(batch, SCAN_CONCURRENCY, async ({ iqName, label }) => {
           // Sempre busca de novo, mesmo se este ativo já está no cache: cada
           // varredura precisa refletir as velas mais recentes no momento em
           // que o usuário clicou, não o que estava ao vivo há minutos atrás
@@ -235,7 +260,7 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
                 `[mirror] histórico insuficiente para ${iqName}: ${history.length} vela(s)`,
               );
               skipped.push(label);
-              continue;
+              return;
             }
             store.set(iqName, { label, history, index: buildSeriesIndex(history), at: Date.now() });
             processed++;
@@ -244,8 +269,7 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
             console.error(`[mirror] loadHistory falhou para ${iqName}:`, error);
             skipped.push(label);
           }
-          await sleep(120);
-        }
+        });
         return {
           ...base,
           processed,
@@ -261,11 +285,11 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
       const skipped: string[] = [];
       let processed = 0;
 
-      for (const { iqName } of batch) {
+      await mapWithConcurrency(batch, SCAN_CONCURRENCY, async ({ iqName }) => {
         const live = store.get(iqName);
         if (!live) {
           skipped.push(iqName);
-          continue;
+          return;
         }
         processed++;
 
@@ -284,13 +308,12 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
           if (error instanceof IqOptionBackoffError) throw error;
           console.error(`[mirror] falha ao atualizar janela ao vivo de ${iqName}:`, error);
           skipped.push(iqName);
-          continue;
+          return;
         }
-        await sleep(120);
         // A última vela pode estar em formação: só velas fechadas entram.
         const closed = liveCandles.slice(0, -1);
         const liveWindow = closed.slice(-(data.windowSize + 1));
-        if (liveWindow.length < data.windowSize + 1) continue;
+        if (liveWindow.length < data.windowSize + 1) return;
         const liveStart = liveWindow[0]!.time;
 
         const found: MirrorMatch[] = [];
@@ -305,7 +328,7 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
             }).filter((m) => m.projection.length >= MIN_PROJECTION_STEPS),
           );
         }
-        if (found.length === 0) continue;
+        if (found.length === 0) return;
 
         found.sort((a, b) => b.correlation - a.correlation);
         const matches = found.slice(0, MAX_MATCHES);
@@ -315,7 +338,7 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
           matches,
           consensus: consensusOf(matches),
         });
-      }
+      });
 
       groups.sort((a, b) => (b.matches[0]?.correlation ?? 0) - (a.matches[0]?.correlation ?? 0));
 
