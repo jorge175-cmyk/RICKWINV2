@@ -5,11 +5,18 @@
 -- do catálogo dentro desse lote), por timeframe. Guarda também a janela ao
 -- vivo já buscada do lote atual, para não reabrir conexão com a corretora a
 -- cada fatia só para reler a mesma ponta viva.
+--
+-- claimed_until: como o agendamento pode disparar de poucos em poucos
+-- segundos, duas chamadas poderiam se sobrepor e corromper o cursor (uma
+-- lendo o progresso antes da outra terminar de gravar). Mesma trava por
+-- tempo já usada para coordenar o login da IQ Option (claim_iqoption_login):
+-- só processa quem conseguir "reivindicar" o cursor.
 CREATE TABLE public.mirror_scan_cursor (
   timeframe TEXT PRIMARY KEY,
   live_offset INTEGER NOT NULL DEFAULT 0,
   haystack_offset INTEGER NOT NULL DEFAULT 0,
   live_windows JSONB NOT NULL DEFAULT '{}'::jsonb,
+  claimed_until TIMESTAMPTZ,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

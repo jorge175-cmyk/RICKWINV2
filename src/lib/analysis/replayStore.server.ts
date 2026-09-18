@@ -19,17 +19,39 @@ export interface ScanCursor {
   liveWindows: Record<string, MirrorCandle[]>;
 }
 
-const EMPTY_CURSOR: ScanCursor = { liveOffset: 0, haystackOffset: 0, liveWindows: {} };
+/**
+ * Tenta reivindicar o cursor deste timeframe com exclusividade pelos
+ * próximos `leaseSeconds` — o agendamento pode disparar de poucos em poucos
+ * segundos (Supabase Cron aceita até 1 em 1 segundo), então sem isso duas
+ * chamadas em cima da hora poderiam ler o mesmo progresso e uma sobrescrever
+ * o avanço da outra. Devolve null se outra chamada já reivindicou e ainda
+ * está dentro do prazo — quem receber null deve só pular esta vez, nunca
+ * insistir. Mesmo padrão de trava por tempo já usado para coordenar o login
+ * da IQ Option (ver claim_iqoption_login).
+ */
+export async function claimScanCursor(
+  timeframe: string,
+  leaseSeconds: number,
+): Promise<ScanCursor | null> {
+  // Garante que a linha existe, sem mexer numa já existente.
+  await db
+    .from("mirror_scan_cursor")
+    .upsert(
+      { timeframe, live_offset: 0, haystack_offset: 0, live_windows: {} },
+      { onConflict: "timeframe", ignoreDuplicates: true },
+    );
 
-/** Cursor atual do job para este timeframe, ou o ponto de partida se nunca rodou. */
-export async function getScanCursor(timeframe: string): Promise<ScanCursor> {
+  const now = new Date();
+  const claimedUntil = new Date(now.getTime() + leaseSeconds * 1000).toISOString();
   const { data, error } = await db
     .from("mirror_scan_cursor")
-    .select("live_offset, haystack_offset, live_windows")
+    .update({ claimed_until: claimedUntil })
     .eq("timeframe", timeframe)
+    .or(`claimed_until.is.null,claimed_until.lt.${now.toISOString()}`)
+    .select("live_offset, haystack_offset, live_windows")
     .maybeSingle();
-  if (error) throw new Error(`Unable to read scan cursor: ${error.message}`);
-  if (!data) return { ...EMPTY_CURSOR };
+  if (error) throw new Error(`Unable to claim scan cursor: ${error.message}`);
+  if (!data) return null;
   return {
     liveOffset: data.live_offset,
     haystackOffset: data.haystack_offset,
@@ -37,7 +59,7 @@ export async function getScanCursor(timeframe: string): Promise<ScanCursor> {
   };
 }
 
-/** Grava onde o job parou, para o próximo tick retomar dali. */
+/** Grava onde o job parou e libera a reivindicação, para o próximo tick poder retomar dali. */
 export async function saveScanCursor(timeframe: string, cursor: ScanCursor): Promise<void> {
   const { error } = await db.from("mirror_scan_cursor").upsert(
     {
@@ -45,6 +67,7 @@ export async function saveScanCursor(timeframe: string, cursor: ScanCursor): Pro
       live_offset: cursor.liveOffset,
       haystack_offset: cursor.haystackOffset,
       live_windows: cursor.liveWindows,
+      claimed_until: null,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "timeframe" },

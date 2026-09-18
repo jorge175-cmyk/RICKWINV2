@@ -14,6 +14,7 @@
 // em dia por fora).
 import { createFileRoute } from "@tanstack/react-router";
 import { authenticateCronRequest } from "@/integrations/supabase/cron-auth";
+import type { ScanCursor } from "@/lib/analysis/replayStore.server";
 
 const LIVE_CHUNK = 5;
 const HAYSTACK_CHUNK = 10;
@@ -21,6 +22,13 @@ const WINDOW_SIZE = 40;
 const MIN_CORRELATION = 0.93;
 /** Fatias processadas por chamada — mais de uma reduz quantas vezes o cron precisa disparar. */
 const SLICES_PER_RUN = 2;
+/**
+ * Quanto tempo o cursor fica reivindicado. O agendamento pode disparar a
+ * cada poucos segundos (Supabase Cron aceita até 1 em 1 segundo) — sem essa
+ * trava, duas chamadas sobrepostas corromperiam o progresso. Generoso o
+ * bastante para cobrir o pior caso das SLICES_PER_RUN fatias com folga.
+ */
+const CLAIM_LEASE_SECONDS = 30;
 
 export const Route = createFileRoute("/api/cron/mirror-scan")({
   server: {
@@ -38,7 +46,7 @@ export const Route = createFileRoute("/api/cron/mirror-scan")({
           await import("@/lib/iqoption/iqoption.server");
         const { buildOtcAssetList } = await import("@/lib/iqoption/candles.functions");
         const { buildCatalog, runMatchSlice } = await import("@/lib/analysis/mirror.functions");
-        const { getScanCursor, saveScanCursor, clearReplayMatches, insertReplayMatches } =
+        const { claimScanCursor, saveScanCursor, clearReplayMatches, insertReplayMatches } =
           await import("@/lib/analysis/replayStore.server");
 
         let slicesRun = 0;
@@ -50,10 +58,21 @@ export const Route = createFileRoute("/api/cron/mirror-scan")({
             return Response.json({ ok: true, timeframe, slicesRun: 0, matchesFound: 0 });
           }
 
-          let cursor = await getScanCursor(timeframe);
+          // Se outra chamada disparada há pouco ainda estiver processando,
+          // não insiste — só pula esta vez. O próximo disparo tenta de novo.
+          let cursor: ScanCursor | null = await claimScanCursor(timeframe, CLAIM_LEASE_SECONDS);
+          if (!cursor) {
+            return Response.json({
+              ok: true,
+              timeframe,
+              slicesRun: 0,
+              matchesFound: 0,
+              skipped: "busy",
+            });
+          }
 
           for (let i = 0; i < SLICES_PER_RUN; i++) {
-            let liveOffset = cursor.liveOffset;
+            let liveOffset: number = cursor.liveOffset;
             if (liveOffset >= catalog.length) {
               liveOffset = 0;
               cursor = { liveOffset: 0, haystackOffset: 0, liveWindows: {} };
@@ -111,7 +130,7 @@ export const Route = createFileRoute("/api/cron/mirror-scan")({
               );
             }
 
-            const nextLiveOffset =
+            const nextLiveOffset: number =
               result.haystackNextOffset == null
                 ? liveOffset + batch.length < catalog.length
                   ? liveOffset + batch.length
