@@ -50,36 +50,36 @@ export type Database = {
       iqoption_candles: {
         Row: {
           asset: string
-          timeframe: string
-          time: number
-          open: number
+          close: number
           high: number
           low: number
-          close: number
-          volume: number
+          open: number
+          time: number
+          timeframe: string
           updated_at: string
+          volume: number
         }
         Insert: {
           asset: string
-          timeframe: string
-          time: number
-          open: number
+          close: number
           high: number
           low: number
-          close: number
-          volume?: number
+          open: number
+          time: number
+          timeframe: string
           updated_at?: string
+          volume?: number
         }
         Update: {
           asset?: string
-          timeframe?: string
-          time?: number
-          open?: number
+          close?: number
           high?: number
           low?: number
-          close?: number
-          volume?: number
+          open?: number
+          time?: number
+          timeframe?: string
           updated_at?: string
+          volume?: number
         }
         Relationships: []
       }
