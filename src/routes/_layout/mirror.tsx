@@ -6,29 +6,20 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { TimeframeSelector } from "@/components/trading/TimeframeSelector";
-import { MirrorMatchCard } from "@/components/trading/MirrorMatchCard";
 import { getOtcAssets } from "@/lib/iqoption/candles.functions";
 import {
   mirrorScanChunk,
+  getReplayResults,
   type MirrorAssetGroup,
   type MirrorChunkResult,
 } from "@/lib/analysis/mirror.functions";
 import { consensusOf, type MirrorCandle, type MirrorMatch } from "@/lib/analysis/mirror";
 import { backfillArchiveChunk } from "@/lib/iqoption/backfill.functions";
 import { mirrorVerdict, type MirrorVerdict } from "@/lib/analysis/mirrorVerdict.functions";
+import { ReplayGroupCard } from "@/components/trading/ReplayGroupCard";
 
 import { toast } from "sonner";
-import {
-  Archive,
-  ArrowLeft,
-  Copy,
-  Loader2,
-  Search,
-  Sparkles,
-  StopCircle,
-  Wifi,
-  WifiOff,
-} from "lucide-react";
+import { Archive, ArrowLeft, Copy, Loader2, Search, StopCircle, Wifi, WifiOff } from "lucide-react";
 
 const FALLBACK_ASSETS = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CHF", "USD/CAD"];
 const CHUNK = 10;
@@ -81,12 +72,6 @@ export const Route = createFileRoute("/_layout/mirror")({
   }),
 });
 
-const VERDICT_LABEL: Record<MirrorVerdict["verdict"], string> = {
-  REPETICAO_CONFIRMADA: "Repetição confirmada",
-  PROVAVEL_COINCIDENCIA: "Provável coincidência",
-  SEM_REPETICAO: "Sem repetição",
-};
-
 type Phase = "idle" | "archive" | "collect" | "match" | "done";
 
 /** Horário local do usuário: é nele que a operação será aberta. */
@@ -119,6 +104,18 @@ function MirrorPage() {
     queryFn: () => getOtcAssets(),
     staleTime: 30 * 60 * 1000,
   });
+
+  /**
+   * Replays já encontrados pelo job em segundo plano — instantâneo, sem
+   * rodar varredura nenhuma. Repolling periódico é o que faz essa lista
+   * atualizar sozinha conforme o job avança pelo catálogo continuamente.
+   */
+  const { data: autoResults, dataUpdatedAt: autoResultsFetchedAt } = useQuery({
+    queryKey: ["replayResults", timeframe],
+    queryFn: () => getReplayResults({ data: { timeframe: timeframe as "M1" | "M5" | "M15" } }),
+    refetchInterval: 20_000,
+  });
+  const autoGroups = autoResults?.groups ?? [];
 
   /** Catálogo completo da corretora: OTC primeiro, onde a repetição é comum. */
   const allAssets = useMemo(() => {
@@ -482,6 +479,61 @@ function MirrorPage() {
           </p>
         </div>
 
+        <section className="space-y-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <h2 className="font-display text-lg font-bold">Detecção automática</h2>
+            <Badge variant="outline" className="gap-1.5 border-call/40 bg-call/10 text-call">
+              <Wifi className="h-3.5 w-3.5" />
+              Rodando em segundo plano
+            </Badge>
+            {autoResults?.updatedAt ? (
+              <span className="text-xs text-muted-foreground">
+                Achado mais recente:{" "}
+                {new Date(autoResults.updatedAt).toLocaleTimeString("pt-BR", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </span>
+            ) : autoResultsFetchedAt ? (
+              <span className="text-xs text-muted-foreground">
+                Nenhum replay salvo ainda — o job está passando pelo catálogo.
+              </span>
+            ) : null}
+          </div>
+          <p className="max-w-3xl text-sm text-muted-foreground">
+            Um job roda sozinho, continuamente, comparando cada ativo contra o catálogo inteiro com
+            profundidade total de histórico. Esta lista atualiza sozinha — não precisa clicar em
+            nada.
+          </p>
+
+          {autoGroups.length === 0 && (
+            <Card className="border-border/50 bg-surface/40">
+              <CardContent className="p-6 text-center text-xs text-muted-foreground">
+                Nenhuma repetição detectada no momento.
+              </CardContent>
+            </Card>
+          )}
+
+          {autoGroups.map((group) => (
+            <ReplayGroupCard
+              key={`auto-${group.liveAsset}`}
+              group={group}
+              timeframe={timeframe}
+              verdict={verdicts[group.liveAsset]}
+              loading={pendingVerdict === group.liveAsset}
+              onAskAi={() => void askAi(group)}
+            />
+          ))}
+        </section>
+
+        <div className="space-y-1">
+          <h2 className="font-display text-lg font-bold">Varredura manual</h2>
+          <p className="text-sm text-muted-foreground">
+            Roda uma vez, na hora, com os ativos e a profundidade que você escolher aqui — útil para
+            testar um timeframe diferente sem esperar o job em segundo plano.
+          </p>
+        </div>
+
         <Card className="border-border/50 glass-panel">
           <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-end">
             <div className="space-y-1.5">
@@ -646,160 +698,16 @@ function MirrorPage() {
           );
         })()}
 
-        {groups.map((group) => {
-          const verdict = verdicts[group.liveAsset];
-          const loading = pendingVerdict === group.liveAsset;
-          const perfectMatch = group.matches.find((m) => m.exact);
-          const hasPerfect = perfectMatch != null;
-          /** O plano de operações segue a repetição idêntica quando existe. */
-          const planMatch = perfectMatch ?? group.matches[0];
-          const plan = planMatch?.projection ?? [];
-          return (
-            <section key={group.liveAsset} className="space-y-3">
-              <div
-                className={`space-y-3 rounded-xl border p-4 ${
-                  hasPerfect
-                    ? "border-2 border-primary bg-primary/10 shadow-lg shadow-primary/20"
-                    : "border-border/50 bg-surface/40"
-                }`}
-              >
-                <div className="flex flex-wrap items-center gap-3">
-                  <div className="space-y-0.5">
-                    <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                      Entrar neste ativo
-                    </p>
-                    <h2 className="font-display text-2xl font-bold text-foreground">
-                      {group.liveAsset}
-                    </h2>
-                  </div>
-                  {hasPerfect && (
-                    <Badge className="bg-primary text-primary-foreground">
-                      Repetição 100% idêntica
-                    </Badge>
-                  )}
-                  <Badge variant="secondary">{group.matches.length} coincidência(s)</Badge>
-                  <Badge variant="secondary">{timeframe}</Badge>
-                  {group.consensus.direction && (
-                    <Badge
-                      variant="outline"
-                      className={group.consensus.direction === "CALL" ? "text-call" : "text-put"}
-                    >
-                      Consenso: {group.consensus.direction === "CALL" ? "COMPRA" : "VENDA"} (
-                      {group.consensus.agreement}%)
-                    </Badge>
-                  )}
-                </div>
-
-                {plan.length > 0 && (
-                  <div className="space-y-2">
-                    <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                      Plano das próximas {plan.length} velas · {group.liveAsset}
-                    </p>
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-5">
-                      {plan.map((step) => {
-                        const up = step.direction === "CALL";
-                        const past = step.time * 1000 < Date.now();
-                        return (
-                          <div
-                            key={step.step}
-                            className={`rounded-lg border p-2 text-center ${
-                              past
-                                ? "border-border/40 bg-background/20 opacity-50"
-                                : up
-                                  ? "border-call/40 bg-call/10"
-                                  : "border-put/40 bg-put/10"
-                            }`}
-                          >
-                            <p className="font-display text-base font-bold tabular-nums text-foreground">
-                              {CLOCK_FMT.format(new Date(step.time * 1000))}
-                            </p>
-                            <p
-                              className={`font-display text-sm font-bold ${up ? "text-call" : "text-put"}`}
-                            >
-                              {up ? "COMPRA" : "VENDA"}
-                            </p>
-                            <p className="text-[10px] text-muted-foreground">
-                              {past ? "vela já passou" : `vela ${step.step}`}
-                            </p>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      {group.liveAsset}:{" "}
-                      {plan
-                        .map(
-                          (step) =>
-                            `${step.direction === "CALL" ? "compra" : "venda"} ${CLOCK_FMT.format(new Date(step.time * 1000))}`,
-                        )
-                        .join(" · ")}
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              <div className="grid gap-4">
-                {group.matches.map((match) => (
-                  <MirrorMatchCard
-                    key={`${group.liveAsset}-${match.asset}-${match.transform}-${match.startTime}`}
-                    match={match}
-                    liveWindow={group.liveWindow}
-                  />
-                ))}
-              </div>
-
-              <Card className="border-border/50 glass-panel">
-                <CardHeader className="pb-2">
-                  <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-                    <Sparkles className="h-4 w-4" /> Veredito final — IA · {group.liveAsset}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {!verdict && (
-                    <Button
-                      variant="outline"
-                      className="gap-2"
-                      onClick={() => void askAi(group)}
-                      disabled={pendingVerdict != null}
-                    >
-                      {loading ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Sparkles className="h-4 w-4" />
-                      )}
-                      {loading ? "Analisando…" : "Validar com IA"}
-                    </Button>
-                  )}
-                  {verdict && (
-                    <div className="space-y-2">
-                      <div className="flex flex-wrap items-center gap-3">
-                        <Badge variant="secondary">{VERDICT_LABEL[verdict.verdict]}</Badge>
-                        {verdict.direction && (
-                          <span
-                            className={`font-display text-lg font-bold ${verdict.direction === "CALL" ? "text-call" : "text-put"}`}
-                          >
-                            {verdict.direction === "CALL" ? "COMPRA" : "VENDA"} ·{" "}
-                            {verdict.confidence}%
-                          </span>
-                        )}
-                      </div>
-                      {verdict.reasoning && (
-                        <p className="text-sm text-muted-foreground">{verdict.reasoning}</p>
-                      )}
-                      {verdict.risks.length > 0 && (
-                        <ul className="list-inside list-disc space-y-1 text-xs text-muted-foreground">
-                          {verdict.risks.map((risk) => (
-                            <li key={risk}>{risk}</li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </section>
-          );
-        })}
+        {groups.map((group) => (
+          <ReplayGroupCard
+            key={`manual-${group.liveAsset}`}
+            group={group}
+            timeframe={timeframe}
+            verdict={verdicts[group.liveAsset]}
+            loading={pendingVerdict === group.liveAsset}
+            onAskAi={() => void askAi(group)}
+          />
+        ))}
       </main>
     </div>
   );

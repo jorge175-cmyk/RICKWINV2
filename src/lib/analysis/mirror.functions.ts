@@ -9,6 +9,7 @@ import {
 } from "@/lib/iqoption/candleHistory.server";
 import {
   buildSeriesIndex,
+  consensusOf,
   findMatchesFast,
   type MirrorCandle,
   type MirrorConsensus,
@@ -17,6 +18,8 @@ import {
 } from "./mirror";
 
 const BLOCK_SIZE = 500;
+/** Máximo de coincidências mantidas por ativo nos resultados do job em segundo plano. */
+const MAX_MATCHES_BACKGROUND = 8;
 /**
  * Quantos ativos processar em paralelo por etapa. Antes, cada ativo abria sua
  * conexão e esperava a anterior terminar — agora que cada chamada já abre sua
@@ -139,7 +142,7 @@ interface StoredSeries {
 }
 
 /** Catálogo normalizado (nomes reconhecidos pela corretora, sem repetição). */
-function buildCatalog(assets: string[]): Array<{ iqName: string; label: string }> {
+export function buildCatalog(assets: string[]): Array<{ iqName: string; label: string }> {
   const out: Array<{ iqName: string; label: string }> = [];
   const seen = new Set<string>();
   for (const symbol of assets) {
@@ -233,6 +236,141 @@ export interface MirrorChunkResult {
   error?: string;
 }
 
+export interface MatchSliceParams {
+  fetchCandles: (name: string, size: number, count: number, to?: number) => Promise<MirrorCandle[]>;
+  /** Reconhece IqOptionBackoffError sem precisar importar a classe aqui (mantém iqoption.server fora do bundle do cliente). */
+  isBackoffError: (error: unknown) => boolean;
+  timeframe: "M1" | "M5" | "M15";
+  windowSize: number;
+  minCorrelation: number;
+  /** Catálogo completo (para calcular corretamente o `haystackNextOffset`). */
+  catalog: Array<{ iqName: string; label: string }>;
+  /** Lote de ativos AO VIVO a comparar nesta chamada. */
+  batch: Array<{ iqName: string; label: string }>;
+  haystackOffset: number;
+  haystackLimit: number;
+  /** Aceita o formato bruto vindo do zod (volume opcional inclui `undefined`); normalizado internamente. */
+  liveWindowsIn?: Record<string, Array<z.infer<typeof candleSchema>>> | undefined;
+}
+
+export interface MatchSliceResult {
+  partialGroups: MirrorPartialGroup[];
+  liveWindows: Record<string, MirrorCandle[]>;
+  processed: number;
+  skippedAssets: string[];
+  storedAssets: number;
+  storedCandles: number;
+  haystackNextOffset: number | null;
+}
+
+/**
+ * O núcleo do cruzamento: compara um lote de ativos ao vivo contra UMA FATIA
+ * do catálogo (o "palheiro"). Usado tanto pela varredura manual
+ * (mirrorScanChunk, abaixo) quanto pelo job de detecção em segundo plano
+ * (src/routes/api/cron/mirror-scan.ts) — mantido num só lugar porque é
+ * exatamente o código que precisou de ajuste fino para não estourar o limite
+ * de CPU do Cloudflare Workers (ver MAX_ARCHIVE_CANDLES/HAYSTACK_CONCURRENCY).
+ */
+export async function runMatchSlice(params: MatchSliceParams): Promise<MatchSliceResult> {
+  const {
+    fetchCandles,
+    isBackoffError,
+    timeframe,
+    windowSize,
+    minCorrelation,
+    catalog,
+    batch,
+    haystackOffset,
+    haystackLimit,
+    liveWindowsIn,
+  } = params;
+  const size = timeframeSeconds(timeframe);
+
+  const haystackBatch = catalog.slice(haystackOffset, haystackOffset + haystackLimit);
+  const haystackNextOffset =
+    haystackOffset + haystackBatch.length < catalog.length
+      ? haystackOffset + haystackBatch.length
+      : null;
+
+  const haystack = new Map<string, StoredSeries>();
+  await mapWithConcurrency(haystackBatch, HAYSTACK_CONCURRENCY, async ({ iqName, label }) => {
+    const history = await getStoredCandles(iqName, timeframe, { maxCandles: MAX_ARCHIVE_CANDLES });
+    if (history.length < windowSize + 6) return;
+    haystack.set(iqName, { label, history, index: buildSeriesIndex(history) });
+  });
+  let haystackCandles = 0;
+  for (const s of haystack.values()) haystackCandles += s.history.length;
+
+  const liveWindows: Record<string, MirrorCandle[]> = {};
+  const partialGroups: MirrorPartialGroup[] = [];
+  const skipped: string[] = [];
+  let processed = 0;
+
+  await mapWithConcurrency(batch, SCAN_CONCURRENCY, async ({ iqName, label }) => {
+    // A janela ao vivo precisa refletir o instante do cruzamento, não o
+    // instante em que o arquivo foi lido. Mas como o MESMO lote de ativos ao
+    // vivo é reprocessado uma vez por fatia do palheiro, a janela só é
+    // buscada de novo na corretora na PRIMEIRA fatia — nas seguintes, quem
+    // chama ecoa de volta a que já veio, evitando abrir conexão à toa várias
+    // vezes só para reler a mesma ponta viva.
+    let liveWindow: MirrorCandle[] | undefined = liveWindowsIn?.[iqName]?.map((c) => ({
+      time: c.time,
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+      volume: c.volume ?? 0,
+    }));
+    if (!liveWindow) {
+      let liveCandles: MirrorCandle[];
+      try {
+        liveCandles = await fetchCandles(iqName, size, windowSize + 5);
+      } catch (error) {
+        if (isBackoffError(error)) throw error;
+        console.error(`[mirror] falha ao atualizar janela ao vivo de ${iqName}:`, error);
+        skipped.push(iqName);
+        return;
+      }
+      // A última vela pode estar em formação: só velas fechadas entram.
+      const closed = liveCandles.slice(0, -1);
+      liveWindow = closed.slice(-(windowSize + 1));
+    }
+    if (liveWindow.length < windowSize + 1) {
+      skipped.push(iqName);
+      return;
+    }
+    liveWindows[iqName] = liveWindow;
+    processed++;
+    const liveStart = liveWindow[0]!.time;
+
+    const found: MirrorMatch[] = [];
+    for (const [histName, hist] of haystack) {
+      found.push(
+        ...findMatchesFast(hist.label, timeframe, liveWindow, hist.history, hist.index, {
+          minCorrelation,
+          maxPerAsset: 3,
+          excludeFrom: histName === iqName ? liveStart : undefined,
+          projectionSteps: PROJECTION_STEPS,
+          stepSeconds: size,
+        }).filter((m) => m.projection.length >= MIN_PROJECTION_STEPS),
+      );
+    }
+    if (found.length > 0) {
+      partialGroups.push({ liveAsset: label, liveWindow, matches: found });
+    }
+  });
+
+  return {
+    partialGroups,
+    liveWindows,
+    processed,
+    skippedAssets: skipped,
+    storedAssets: haystack.size,
+    storedCandles: haystackCandles,
+    haystackNextOffset,
+  };
+}
+
 /**
  * Uma etapa da varredura global. O navegador chama em sequência até cobrir todo
  * o catálogo: primeiro coletando o histórico de todos os ativos (do banco,
@@ -309,97 +447,22 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
       // terminar. Cada chamada processa só uma FATIA do catálogo
       // (haystackOffset/haystackLimit); o navegador funde os achados de
       // todas as fatias antes de considerar um lote de ativos ao vivo
-      // concluído.
-      const haystackBatch = catalog.slice(
-        data.haystackOffset,
-        data.haystackOffset + data.haystackLimit,
-      );
-      const haystackNextOffset =
-        data.haystackOffset + haystackBatch.length < catalog.length
-          ? data.haystackOffset + haystackBatch.length
-          : null;
-
-      const haystack = new Map<string, StoredSeries>();
-      await mapWithConcurrency(haystackBatch, HAYSTACK_CONCURRENCY, async ({ iqName, label }) => {
-        const history = await getStoredCandles(iqName, data.timeframe, {
-          maxCandles: MAX_ARCHIVE_CANDLES,
-        });
-        if (history.length < data.windowSize + 6) return;
-        haystack.set(iqName, { label, history, index: buildSeriesIndex(history) });
-      });
-      let haystackCandles = 0;
-      for (const s of haystack.values()) haystackCandles += s.history.length;
-
-      const liveWindows: Record<string, MirrorCandle[]> = {};
-      const partialGroups: MirrorPartialGroup[] = [];
-      const skipped: string[] = [];
-      let processed = 0;
-
-      await mapWithConcurrency(batch, SCAN_CONCURRENCY, async ({ iqName, label }) => {
-        // A janela ao vivo precisa refletir o instante do cruzamento, não o
-        // instante em que o arquivo foi lido. Mas como o MESMO lote de
-        // ativos ao vivo é reprocessado uma vez por fatia do palheiro, a
-        // janela só é buscada de novo na corretora na PRIMEIRA fatia — nas
-        // seguintes, o navegador ecoa de volta a que já veio, evitando abrir
-        // conexão à toa várias vezes só para reler a mesma ponta viva.
-        let liveWindow: MirrorCandle[] | undefined = data.liveWindows?.[iqName]?.map((c) => ({
-          time: c.time,
-          open: c.open,
-          high: c.high,
-          low: c.low,
-          close: c.close,
-          volume: c.volume ?? 0,
-        }));
-        if (!liveWindow) {
-          let liveCandles: MirrorCandle[];
-          try {
-            liveCandles = await fetchCandles(iqName, size, data.windowSize + 5);
-          } catch (error) {
-            if (error instanceof IqOptionBackoffError) throw error;
-            console.error(`[mirror] falha ao atualizar janela ao vivo de ${iqName}:`, error);
-            skipped.push(iqName);
-            return;
-          }
-          // A última vela pode estar em formação: só velas fechadas entram.
-          const closed = liveCandles.slice(0, -1);
-          liveWindow = closed.slice(-(data.windowSize + 1));
-        }
-        if (liveWindow.length < data.windowSize + 1) {
-          skipped.push(iqName);
-          return;
-        }
-        liveWindows[iqName] = liveWindow;
-        processed++;
-        const liveStart = liveWindow[0]!.time;
-
-        const found: MirrorMatch[] = [];
-        for (const [histName, hist] of haystack) {
-          found.push(
-            ...findMatchesFast(hist.label, data.timeframe, liveWindow, hist.history, hist.index, {
-              minCorrelation: data.minCorrelation,
-              maxPerAsset: 3,
-              excludeFrom: histName === iqName ? liveStart : undefined,
-              projectionSteps: PROJECTION_STEPS,
-              stepSeconds: size,
-            }).filter((m) => m.projection.length >= MIN_PROJECTION_STEPS),
-          );
-        }
-        if (found.length > 0) {
-          partialGroups.push({ liveAsset: label, liveWindow, matches: found });
-        }
+      // concluído. A lógica em si mora em runMatchSlice, reaproveitada pelo
+      // job de detecção em segundo plano (src/routes/api/cron/mirror-scan.ts).
+      const result = await runMatchSlice({
+        fetchCandles,
+        isBackoffError: (error) => error instanceof IqOptionBackoffError,
+        timeframe: data.timeframe,
+        windowSize: data.windowSize,
+        minCorrelation: data.minCorrelation,
+        catalog,
+        batch,
+        haystackOffset: data.haystackOffset,
+        haystackLimit: data.haystackLimit,
+        liveWindowsIn: data.liveWindows,
       });
 
-      return {
-        ...base,
-        partialGroups,
-        liveWindows,
-        processed,
-        storedAssets: haystack.size,
-        storedCandles: haystackCandles,
-        skippedAssets: skipped,
-        nextOffset,
-        haystackNextOffset,
-      };
+      return { ...base, ...result, nextOffset };
     } catch (error) {
       console.error("[mirror] scan chunk failed", error);
       if (error instanceof IqOptionBackoffError) {
@@ -411,4 +474,45 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
       }
       return { ...base, nextOffset, error: "Não foi possível concluir esta etapa da varredura." };
     }
+  });
+
+const replayResultsSchema = z.object({
+  timeframe: z.enum(["M1", "M5", "M15"]),
+});
+
+export interface ReplayResults {
+  groups: MirrorAssetGroup[];
+  /** Horário do achado mais recente entre os grupos, ou null se não há nada salvo ainda. */
+  updatedAt: string | null;
+}
+
+/**
+ * Lê os replays já encontrados pelo job em segundo plano (ver
+ * src/routes/api/cron/mirror-scan.ts) — instantâneo, sem rodar varredura
+ * nenhuma. É o que a tela do Espelho OTC mostra por padrão.
+ */
+export const getReplayResults = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => replayResultsSchema.parse(input))
+  .handler(async ({ data }): Promise<ReplayResults> => {
+    const { getReplayGroups } = await import("@/lib/analysis/replayStore.server");
+    const stored = await getReplayGroups(data.timeframe);
+    let updatedAt: string | null = null;
+    for (const g of stored) {
+      if (updatedAt == null || g.foundAt > updatedAt) updatedAt = g.foundAt;
+    }
+    const groups = stored
+      .map((g) => {
+        const matches = [...g.matches]
+          .sort((a, b) => b.correlation - a.correlation)
+          .slice(0, MAX_MATCHES_BACKGROUND);
+        return {
+          liveAsset: g.liveAsset,
+          liveWindow: g.liveWindow,
+          matches,
+          consensus: consensusOf(matches),
+        };
+      })
+      .sort((a, b) => (b.matches[0]?.correlation ?? 0) - (a.matches[0]?.correlation ?? 0));
+    return { groups, updatedAt };
   });
