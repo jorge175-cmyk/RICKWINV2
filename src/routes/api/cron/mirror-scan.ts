@@ -13,8 +13,27 @@
 // zero, sempre com velas frescas (loadHistory/ingest-candles mantêm o banco
 // em dia por fora).
 import { createFileRoute } from "@tanstack/react-router";
-import { authenticateCronRequest } from "@/integrations/supabase/cron-auth";
+import { timingSafeEqual, createHash } from "node:crypto";
 import type { ScanCursor } from "@/lib/analysis/replayStore.server";
+
+// Mesma autenticação própria do ingest-candles.ts (CRON_INGEST_SECRET), não o
+// LOVABLE_CRON_SECRET: esse último é gerado e ocultado pelo Lovable para uso
+// exclusivo do painel Cloud > Jobs, então não dá para lê-lo e colar num
+// cron.schedule manual do pg_cron.
+function authenticateCronRequest(request: Request): Response | null {
+  const secret = process.env["CRON_INGEST_SECRET"];
+  if (!secret) return new Response("Server configuration error", { status: 500 });
+
+  const match = /^Bearer ([^\s,]+)$/.exec(request.headers.get("authorization") ?? "");
+  const token = match?.[1];
+  if (!token) return new Response("Unauthorized", { status: 401 });
+
+  const digest = (value: string) => createHash("sha256").update(value, "utf8").digest();
+  if (!timingSafeEqual(digest(token), digest(secret))) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+  return null;
+}
 
 const LIVE_CHUNK = 5;
 const HAYSTACK_CHUNK = 10;
@@ -34,7 +53,7 @@ export const Route = createFileRoute("/api/cron/mirror-scan")({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const authError = await authenticateCronRequest(request);
+        const authError = authenticateCronRequest(request);
         if (authError) return authError;
 
         const url = new URL(request.url);
