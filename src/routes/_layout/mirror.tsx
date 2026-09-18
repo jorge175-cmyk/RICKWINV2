@@ -8,7 +8,12 @@ import { Progress } from "@/components/ui/progress";
 import { TimeframeSelector } from "@/components/trading/TimeframeSelector";
 import { MirrorMatchCard } from "@/components/trading/MirrorMatchCard";
 import { getOtcAssets } from "@/lib/iqoption/candles.functions";
-import { mirrorScanChunk, type MirrorAssetGroup } from "@/lib/analysis/mirror.functions";
+import {
+  mirrorScanChunk,
+  type MirrorAssetGroup,
+  type MirrorChunkResult,
+} from "@/lib/analysis/mirror.functions";
+import { consensusOf, type MirrorCandle, type MirrorMatch } from "@/lib/analysis/mirror";
 import { backfillArchiveChunk } from "@/lib/iqoption/backfill.functions";
 import { mirrorVerdict, type MirrorVerdict } from "@/lib/analysis/mirrorVerdict.functions";
 
@@ -29,13 +34,30 @@ const FALLBACK_ASSETS = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CHF", 
 const CHUNK = 10;
 /**
  * Ativos ao vivo comparados por chamada na etapa de cruzamento. O custo de
- * CPU dessa etapa é (ativos aqui) × (ativos no palheiro) × (velas por ativo)
- * — com o palheiro cobrindo o catálogo inteiro (~200+ ativos), um lote de 40
- * chegava a bilhões de operações numa chamada só e o Cloudflare Workers
- * matava a requisição por "exceeded CPU time limit" (travava em 0%). 5 é
- * suficientemente pequeno para caber com folga, ao custo de mais chamadas.
+ * CPU dessa etapa é (ativos aqui) × (ativos NESTA FATIA do palheiro) × (velas
+ * por ativo) — ver HAYSTACK_CHUNK abaixo: o catálogo inteiro nunca é lido
+ * numa chamada só, então esses dois números juntos é que definem o tamanho
+ * de cada chamada, não mais o catálogo inteiro de uma vez (o que chegava a
+ * bilhões de operações e o Cloudflare Workers matava por "exceeded CPU time
+ * limit", travando a varredura em 0%).
  */
 const MATCH_CHUNK = 5;
+/**
+ * Ativos do catálogo (palheiro) lidos por chamada na etapa de cruzamento. O
+ * MESMO lote de ativos ao vivo (MATCH_CHUNK) é reprocessado uma vez por
+ * fatia até cobrir o catálogo inteiro — assim a profundidade do histórico
+ * (MAX_ARCHIVE_CANDLES no servidor) não precisa ser cortada para caber no
+ * limite de CPU: só o catálogo fica espalhado por mais chamadas.
+ *
+ * Conta aproximada por chamada: MATCH_CHUNK × HAYSTACK_CHUNK × velas-por-
+ * ativo × 4 leituras (direta/invertida/espelhada/as duas) × velas-comparadas.
+ * Com 5 × 10 × 15.000 × 4 × 40 ≈ 120 milhões de operações — bem abaixo da
+ * cena que estourava o limite de CPU (~2,9 bilhões, com lote de 40 ativos
+ * contra o catálogo inteiro de uma vez).
+ */
+const HAYSTACK_CHUNK = 10;
+/** Máximo de coincidências mantidas por ativo ao vivo, depois de juntar todas as fatias do palheiro. */
+const MAX_MATCHES = 8;
 
 export const Route = createFileRoute("/_layout/mirror")({
   component: MirrorPage,
@@ -75,6 +97,8 @@ function MirrorPage() {
   const [windowSize, setWindowSize] = useState(40);
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState({ done: 0, total: 0 });
+  /** Progresso das fatias do palheiro (catálogo) DENTRO do lote de ativos ao vivo atual. */
+  const [haystackProgress, setHaystackProgress] = useState({ done: 0, total: 0 });
   const [stored, setStored] = useState({ assets: 0, candles: 0 });
   const [skipped, setSkipped] = useState(0);
   const [groups, setGroups] = useState<MirrorAssetGroup[]>([]);
@@ -122,6 +146,9 @@ function MirrorPage() {
   /** Varredura e arquivamento não podem rodar ao mesmo tempo (competem pela mesma corretora). */
   const busy = running || archiving;
 
+  /** Repetições idênticas sempre no topo da lista. */
+  const perfectScore = (g: MirrorAssetGroup) => (g.matches.some((m) => m.exact) ? 1 : 0);
+
   /** Varre o catálogo inteiro: coleta o histórico de todos e cruza todos contra todos. */
   const runFullScan = async () => {
     if (allAssets.length === 0) {
@@ -136,56 +163,42 @@ function MirrorPage() {
     setPendingVerdict(null);
     setSkipped(0);
     setStored({ assets: 0, candles: 0 });
+    setHaystackProgress({ done: 0, total: 0 });
     setProgress({ done: 0, total: allAssets.length });
-    let skippedTotal = 0;
-    let collectedTotal = 0;
+    const assets = allAssets.slice(0, 600);
 
-    for (const stage of ["collect", "match"] as const) {
-      setPhase(stage);
+    // ---- Etapa 1 de 2: coleta (mantém o banco em dia por ativo) ----
+    setPhase("collect");
+    {
       let offset = 0;
-      let total = allAssets.length;
+      let total = assets.length;
+      let collectedTotal = 0;
+      let skippedTotal = 0;
       setProgress({ done: 0, total });
       while (!cancelRef.current) {
         const chunk = await mirrorScanChunk({
           data: {
             timeframe: timeframe as "M1" | "M5" | "M15",
             windowSize,
-            assets: allAssets.slice(0, 600),
+            assets,
             offset,
-            limit: stage === "match" ? MATCH_CHUNK : CHUNK,
+            limit: CHUNK,
             // O histórico profundo vem do arquivo salvo no banco; aqui só se
             // busca na corretora o punhado de velas recentes que falta.
             historyBlocks: 2,
             minCorrelation: 0.93,
-            phase: stage,
+            phase: "collect",
           },
         });
 
         total = chunk.totalAssets;
-        if (stage === "collect") {
-          // Cada resposta traz só o que foi atualizado NESTA chamada (o
-          // servidor não guarda total nenhum entre chamadas) — o navegador
-          // acumula pra mostrar o progresso da varredura inteira.
-          collectedTotal += chunk.storedAssets;
-          setStored({ assets: collectedTotal, candles: 0 });
-          skippedTotal += chunk.skippedAssets.length;
-          setSkipped(skippedTotal);
-        } else {
-          // No cruzamento o servidor já devolve o total do catálogo, lido
-          // fresco do banco a cada chamada — não é cumulativo por chamada.
-          setStored({ assets: chunk.storedAssets, candles: chunk.storedCandles });
-        }
-        if (chunk.groups.length > 0) {
-          // Repetições idênticas sempre no topo da lista.
-          const perfectScore = (g: MirrorAssetGroup) => (g.matches.some((m) => m.exact) ? 1 : 0);
-          setGroups((prev) =>
-            [...prev, ...chunk.groups].sort(
-              (a, b) =>
-                perfectScore(b) - perfectScore(a) ||
-                (b.matches[0]?.correlation ?? 0) - (a.matches[0]?.correlation ?? 0),
-            ),
-          );
-        }
+        // Cada resposta traz só o que foi atualizado NESTA chamada (o
+        // servidor não guarda total nenhum entre chamadas) — o navegador
+        // acumula pra mostrar o progresso da varredura inteira.
+        collectedTotal += chunk.storedAssets;
+        setStored({ assets: collectedTotal, candles: 0 });
+        skippedTotal += chunk.skippedAssets.length;
+        setSkipped(skippedTotal);
 
         if (chunk.error) {
           setFeed("error");
@@ -199,7 +212,111 @@ function MirrorPage() {
         if (next == null) break;
         offset = next;
       }
-      if (cancelRef.current) break;
+    }
+
+    // ---- Etapa 2 de 2: cruzamento (um lote de ativos ao vivo por vez,
+    // cada um comparado contra o catálogo INTEIRO em fatias) ----
+    if (!cancelRef.current) {
+      setPhase("match");
+      let liveOffset = 0;
+      let liveTotal = assets.length;
+      setProgress({ done: 0, total: liveTotal });
+
+      while (!cancelRef.current) {
+        let haystackOffset = 0;
+        let haystackTotal = assets.length;
+        let liveWindows: Record<string, MirrorCandle[]> | undefined = undefined;
+        let liveBatchNextOffset: number | null = null;
+        let archAssets = 0;
+        let archCandles = 0;
+        let scanErrored = false;
+        // Achados de cada fatia do palheiro, por ativo ao vivo — só vira
+        // grupo final depois de cobrir o catálogo inteiro para este lote.
+        const accumulated = new Map<
+          string,
+          { liveWindow: MirrorCandle[]; matches: MirrorMatch[] }
+        >();
+
+        while (!cancelRef.current) {
+          const chunk: MirrorChunkResult = await mirrorScanChunk({
+            data: {
+              timeframe: timeframe as "M1" | "M5" | "M15",
+              windowSize,
+              assets,
+              offset: liveOffset,
+              limit: MATCH_CHUNK,
+              historyBlocks: 2,
+              minCorrelation: 0.93,
+              phase: "match",
+              haystackOffset,
+              haystackLimit: HAYSTACK_CHUNK,
+              liveWindows,
+            },
+          });
+
+          liveTotal = chunk.totalAssets;
+          haystackTotal = chunk.totalAssets;
+          liveBatchNextOffset = chunk.nextOffset;
+          liveWindows = chunk.liveWindows;
+          archAssets += chunk.storedAssets;
+          archCandles += chunk.storedCandles;
+          setHaystackProgress({
+            done: chunk.haystackNextOffset ?? haystackTotal,
+            total: haystackTotal,
+          });
+
+          for (const partial of chunk.partialGroups) {
+            const entry = accumulated.get(partial.liveAsset) ?? {
+              liveWindow: partial.liveWindow,
+              matches: [],
+            };
+            entry.matches.push(...partial.matches);
+            accumulated.set(partial.liveAsset, entry);
+          }
+
+          if (chunk.error) {
+            setFeed("error");
+            toast.error(chunk.error);
+            scanErrored = true;
+            break;
+          }
+          if (chunk.processed > 0) setFeed("ok");
+
+          const nextHaystack = chunk.haystackNextOffset;
+          if (nextHaystack == null) break;
+          haystackOffset = nextHaystack;
+        }
+        if (cancelRef.current || scanErrored) break;
+
+        // Lote de ativos ao vivo concluído (cobriu o catálogo inteiro):
+        // consolida os achados de todas as fatias num resultado final.
+        setStored({ assets: archAssets, candles: archCandles });
+        const newGroups: MirrorAssetGroup[] = [];
+        for (const [liveAsset, entry] of accumulated) {
+          if (entry.matches.length === 0) continue;
+          entry.matches.sort((a, b) => b.correlation - a.correlation);
+          const matches = entry.matches.slice(0, MAX_MATCHES);
+          newGroups.push({
+            liveAsset,
+            liveWindow: entry.liveWindow,
+            matches,
+            consensus: consensusOf(matches),
+          });
+        }
+        if (newGroups.length > 0) {
+          setGroups((prev) =>
+            [...prev, ...newGroups].sort(
+              (a, b) =>
+                perfectScore(b) - perfectScore(a) ||
+                (b.matches[0]?.correlation ?? 0) - (a.matches[0]?.correlation ?? 0),
+            ),
+          );
+        }
+
+        setProgress({ done: liveBatchNextOffset ?? liveTotal, total: liveTotal });
+        if (liveBatchNextOffset == null) break;
+        liveOffset = liveBatchNextOffset;
+      }
     }
 
     setPhase(cancelRef.current ? "idle" : "done");
@@ -300,6 +417,10 @@ function MirrorPage() {
 
   const pct = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
   const archivePct = archive.total > 0 ? Math.round((archive.done / archive.total) * 100) : 0;
+  const haystackPct =
+    haystackProgress.total > 0
+      ? Math.round((haystackProgress.done / haystackProgress.total) * 100)
+      : 0;
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -465,6 +586,17 @@ function MirrorPage() {
               {skipped > 0 && <span>{skipped} ativo(s) sem histórico suficiente</span>}
             </div>
             <Progress value={pct} className="h-1.5" />
+            {phase === "match" && haystackProgress.total > 0 && (
+              <>
+                <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+                  <span>
+                    Cruzando este lote contra o catálogo: {haystackProgress.done} de{" "}
+                    {haystackProgress.total} ativos do palheiro
+                  </span>
+                </div>
+                <Progress value={haystackPct} className="h-1" />
+              </>
+            )}
           </div>
         )}
 
