@@ -68,11 +68,15 @@ async function mapWithConcurrency<T>(
 }
 
 /**
- * Teto de velas lidas do banco por ativo. O arquivo pode ter muito mais; o que
- * interessa ao matcher é a janela mais recente, e ler tudo de 400 ativos
- * estouraria memória e tempo da requisição.
+ * Teto de velas lidas do banco por ativo para montar o palheiro do
+ * cruzamento. 40.000 (o valor anterior) parecia seguro, mas cada leitura
+ * pagina de 1000 em 1000 (getStoredCandles) — depois que o arquivamento
+ * aprofunda o histórico de verdade, isso virou até 40 idas ao banco POR
+ * ATIVO, vezes ~230 ativos, TODA chamada do cruzamento, e a varredura
+ * travava em 0% por minutos. 2.000 velas (uns 33h contínuas de M1) já cobre
+ * bastante coincidência com no máximo 2 idas ao banco por ativo.
  */
-const MAX_ARCHIVE_CANDLES = 40_000;
+const MAX_ARCHIVE_CANDLES = 2_000;
 /** Quando o ativo ainda não tem nada arquivado, busca só um bloco recente. */
 const FIRST_TIME_BLOCKS = 1;
 
