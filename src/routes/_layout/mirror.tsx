@@ -9,6 +9,7 @@ import { TimeframeSelector } from "@/components/trading/TimeframeSelector";
 import { MirrorMatchCard } from "@/components/trading/MirrorMatchCard";
 import { getOtcAssets } from "@/lib/iqoption/candles.functions";
 import { mirrorScanChunk, type MirrorAssetGroup } from "@/lib/analysis/mirror.functions";
+import { backfillArchiveChunk } from "@/lib/iqoption/backfill.functions";
 import { mirrorVerdict, type MirrorVerdict } from "@/lib/analysis/mirrorVerdict.functions";
 
 import { toast } from "sonner";
@@ -45,7 +46,7 @@ const VERDICT_LABEL: Record<MirrorVerdict["verdict"], string> = {
   SEM_REPETICAO: "Sem repetição",
 };
 
-type Phase = "idle" | "collect" | "match" | "done";
+type Phase = "idle" | "archive" | "collect" | "match" | "done";
 
 /** Horário local do usuário: é nele que a operação será aberta. */
 const CLOCK_FMT = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" });
@@ -124,11 +125,9 @@ function MirrorPage() {
             assets: allAssets.slice(0, 600),
             offset,
             limit: CHUNK,
-            // Máximo permitido pelo schema: a coleta já para sozinha quando a
-            // corretora não tem mais velas, então isso puxa o histórico mais
-            // profundo disponível por ativo, sem excesso de acessos nos que
-            // têm pouco histórico.
-            historyBlocks: 20,
+            // O histórico profundo vem do arquivo salvo no banco; aqui só se
+            // busca na corretora o punhado de velas recentes que falta.
+            historyBlocks: 2,
             minCorrelation: 0.93,
             phase: stage,
           },
