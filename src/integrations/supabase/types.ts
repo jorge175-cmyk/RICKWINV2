@@ -47,6 +47,42 @@ export type Database = {
         }
         Relationships: []
       }
+      iqoption_candle_coverage: {
+        Row: {
+          asset: string
+          blocks_fetched: number
+          complete: boolean
+          created_at: string
+          last_error: string | null
+          newest_time: number | null
+          oldest_time: number | null
+          timeframe: string
+          updated_at: string
+        }
+        Insert: {
+          asset: string
+          blocks_fetched?: number
+          complete?: boolean
+          created_at?: string
+          last_error?: string | null
+          newest_time?: number | null
+          oldest_time?: number | null
+          timeframe: string
+          updated_at?: string
+        }
+        Update: {
+          asset?: string
+          blocks_fetched?: number
+          complete?: boolean
+          created_at?: string
+          last_error?: string | null
+          newest_time?: number | null
+          oldest_time?: number | null
+          timeframe?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       iqoption_candles: {
         Row: {
           asset: string
