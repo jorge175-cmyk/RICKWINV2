@@ -62,6 +62,8 @@ function MirrorPage() {
   const [groups, setGroups] = useState<MirrorAssetGroup[]>([]);
   const [verdicts, setVerdicts] = useState<Record<string, MirrorVerdict>>({});
   const [pendingVerdict, setPendingVerdict] = useState<string | null>(null);
+  /** Progresso do arquivamento do histórico completo no banco. */
+  const [archive, setArchive] = useState({ done: 0, total: 0, candles: 0, complete: 0 });
   const cancelRef = useRef(false);
   /**
    * A varredura não usa o canal ao vivo do navegador: o histórico é buscado no
@@ -168,6 +170,59 @@ function MirrorPage() {
 
     setPhase(cancelRef.current ? "idle" : "done");
     if (!cancelRef.current) toast.success("Varredura concluída.");
+  };
+
+  /**
+   * Baixa e salva no banco todo o histórico disponível de cada ativo, por ativo
+   * e horário. Só precisa rodar uma vez por timeframe: depois cada ativo já
+   * arquivado é pulado, e a varredura de replay passa a buscar na corretora
+   * apenas as velas recentes que faltam.
+   */
+  const runArchive = async () => {
+    if (allAssets.length === 0) {
+      toast.error("Catálogo de ativos ainda carregando.");
+      return;
+    }
+    cancelRef.current = false;
+    setPhase("archive");
+    setFeed("ok");
+    setArchive({ done: 0, total: allAssets.length, candles: 0, complete: 0 });
+    let offset = 0;
+    let candles = 0;
+    let complete = 0;
+
+    while (!cancelRef.current) {
+      const chunk = await backfillArchiveChunk({
+        data: {
+          timeframe: timeframe as "M1" | "M5" | "M15",
+          assets: allAssets.slice(0, 600),
+          offset,
+          limit: 4,
+          blocksPerAsset: 8,
+        },
+      });
+      candles += chunk.savedCandles;
+      complete += chunk.completed + chunk.skipped;
+      const next = chunk.nextOffset;
+      setArchive({
+        done: next ?? chunk.totalAssets,
+        total: chunk.totalAssets,
+        candles,
+        complete,
+      });
+      if (chunk.error) {
+        setFeed("error");
+        toast.error(chunk.error);
+        break;
+      }
+      if (next == null) break;
+      offset = next;
+    }
+
+    setPhase("idle");
+    if (!cancelRef.current) {
+      toast.success(`Arquivo atualizado: ${candles.toLocaleString("pt-BR")} velas salvas.`);
+    }
   };
 
   const askAi = async (group: MirrorAssetGroup) => {
