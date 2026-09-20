@@ -149,6 +149,111 @@ export type Database = {
         }
         Relationships: []
       }
+      mirror_replay_matches: {
+        Row: {
+          correlation: number
+          created_at: string
+          direction: string
+          end_time: number
+          found_at: string
+          hist_asset: string
+          id: string
+          is_exact: boolean
+          live_asset: string
+          live_window: Json
+          max_deviation: number
+          next_candle: Json | null
+          predicted_return: number
+          projected_close: number
+          projection: Json | null
+          similarity: number
+          start_time: number
+          timeframe: string
+          transform: string
+          updated_at: string
+          volatility_ratio: number
+          window: Json
+        }
+        Insert: {
+          correlation: number
+          created_at?: string
+          direction: string
+          end_time: number
+          found_at?: string
+          hist_asset: string
+          id?: string
+          is_exact?: boolean
+          live_asset: string
+          live_window: Json
+          max_deviation: number
+          next_candle?: Json | null
+          predicted_return: number
+          projected_close: number
+          projection?: Json | null
+          similarity: number
+          start_time: number
+          timeframe: string
+          transform: string
+          updated_at?: string
+          volatility_ratio: number
+          window: Json
+        }
+        Update: {
+          correlation?: number
+          created_at?: string
+          direction?: string
+          end_time?: number
+          found_at?: string
+          hist_asset?: string
+          id?: string
+          is_exact?: boolean
+          live_asset?: string
+          live_window?: Json
+          max_deviation?: number
+          next_candle?: Json | null
+          predicted_return?: number
+          projected_close?: number
+          projection?: Json | null
+          similarity?: number
+          start_time?: number
+          timeframe?: string
+          transform?: string
+          updated_at?: string
+          volatility_ratio?: number
+          window?: Json
+        }
+        Relationships: []
+      }
+      mirror_scan_cursor: {
+        Row: {
+          claimed_until: string | null
+          created_at: string
+          haystack_offset: number
+          live_offset: number
+          live_windows: Json
+          timeframe: string
+          updated_at: string
+        }
+        Insert: {
+          claimed_until?: string | null
+          created_at?: string
+          haystack_offset?: number
+          live_offset?: number
+          live_windows?: Json
+          timeframe: string
+          updated_at?: string
+        }
+        Update: {
+          claimed_until?: string | null
+          created_at?: string
+          haystack_offset?: number
+          live_offset?: number
+          live_windows?: Json
+          timeframe?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
