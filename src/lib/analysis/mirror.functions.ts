@@ -3,37 +3,21 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { getIqOptionName, timeframeSeconds } from "@/lib/iqoption/mapping";
 import {
+  buildSeriesIndex,
   consensusOf,
-  findMatchesInSeries,
+  findMatchesFast,
   type MirrorCandle,
   type MirrorConsensus,
   type MirrorMatch,
+  type MirrorSeriesIndex,
 } from "./mirror";
-
-const inputSchema = z.object({
-  asset: z.string().min(2),
-  timeframe: z.enum(["M1", "M5", "M15"]),
-  /** Quantidade de velas fechadas usadas como assinatura do trecho ao vivo. */
-  windowSize: z.number().int().min(12).max(60).default(24),
-  /** Ativos que entram na varredura (o próprio ativo é sempre incluído). */
-  assets: z.array(z.string()).max(40).default([]),
-  /** Blocos de histórico por ativo (cada bloco = 500 velas). */
-  historyBlocks: z.number().int().min(1).max(12).default(6),
-  minCorrelation: z.number().min(0.7).max(0.999).default(0.93),
-});
-
-export interface MirrorSearchResult {
-  liveWindow: MirrorCandle[];
-  matches: MirrorMatch[];
-  consensus: MirrorConsensus;
-  scannedAssets: number;
-  scannedCandles: number;
-  skippedAssets: string[];
-  error?: string;
-}
 
 const BLOCK_SIZE = 500;
 const MAX_MATCHES = 8;
+/** Quantas velas à frente cada coincidência precisa projetar. */
+const PROJECTION_STEPS = 5;
+/** Tempo que o histórico baixado continua reaproveitável na varredura. */
+const STORE_TTL_MS = 25 * 60 * 1000;
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -56,119 +40,64 @@ async function loadHistory(
     if (oldest >= to) break;
     to = oldest - sizeSeconds;
     // Espaçamento entre requisições: evita bloqueio por excesso de acessos.
-    await sleep(350);
+    await sleep(250);
   }
   return [...byTime.values()].sort((a, b) => a.time - b.time);
 }
 
-/** Procura trechos históricos que repitam o desenho atual do ativo ao vivo. */
-export const findMirrorMatches = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) => inputSchema.parse(input))
-  .handler(async ({ data }): Promise<MirrorSearchResult> => {
-    const { fetchCandles, IqOptionBackoffError } = await import("@/lib/iqoption/iqoption.server");
-    const size = timeframeSeconds(data.timeframe);
-    const liveName = getIqOptionName(data.asset);
+interface StoredSeries {
+  label: string;
+  history: MirrorCandle[];
+  index: MirrorSeriesIndex;
+  at: number;
+}
 
-    const empty: MirrorSearchResult = {
-      liveWindow: [],
-      matches: [],
-      consensus: consensusOf([]),
-      scannedAssets: 0,
-      scannedCandles: 0,
-      skippedAssets: [],
-    };
+/**
+ * Histórico já baixado, reaproveitado entre as etapas da varredura global.
+ * Vive no processo do servidor; se for perdido, a etapa de coleta refaz.
+ */
+const historyStore = new Map<string, Map<string, StoredSeries>>();
 
-    if (!liveName) {
-      return { ...empty, error: "Ativo não reconhecido pela corretora." };
-    }
+function storeFor(timeframe: string): Map<string, StoredSeries> {
+  let bucket = historyStore.get(timeframe);
+  if (!bucket) {
+    bucket = new Map();
+    historyStore.set(timeframe, bucket);
+  }
+  const cutoff = Date.now() - STORE_TTL_MS;
+  for (const [key, value] of bucket) {
+    if (value.at < cutoff) bucket.delete(key);
+  }
+  return bucket;
+}
 
-    try {
-      const liveSeries = await loadHistory(fetchCandles, liveName, size, 1);
-      if (liveSeries.length < data.windowSize + 3) {
-        return { ...empty, error: "Histórico insuficiente para este ativo e timeframe." };
-      }
-      // A última vela pode estar em formação: usamos apenas velas fechadas.
-      const closed = liveSeries.slice(0, -1);
-      const liveWindow = closed.slice(-(data.windowSize + 1));
-      const liveStart = liveWindow[0]!.time;
+/** Catálogo normalizado (nomes reconhecidos pela corretora, sem repetição). */
+function buildCatalog(assets: string[]): Array<{ iqName: string; label: string }> {
+  const out: Array<{ iqName: string; label: string }> = [];
+  const seen = new Set<string>();
+  for (const symbol of assets) {
+    const iqName = getIqOptionName(symbol);
+    if (!iqName || seen.has(iqName)) continue;
+    seen.add(iqName);
+    out.push({ iqName, label: symbol });
+  }
+  return out;
+}
 
-      const candidates = new Map<string, string>();
-      candidates.set(liveName, data.asset);
-      for (const symbol of data.assets) {
-        const name = getIqOptionName(symbol);
-        if (name) candidates.set(name, symbol);
-      }
-
-      const all: MirrorMatch[] = [];
-      const skipped: string[] = [];
-      let scannedAssets = 0;
-      let scannedCandles = 0;
-
-      for (const [iqName, label] of candidates) {
-        try {
-          const hist = await loadHistory(fetchCandles, iqName, size, data.historyBlocks);
-          if (hist.length === 0) {
-            skipped.push(label);
-            continue;
-          }
-          scannedAssets++;
-          scannedCandles += hist.length;
-          all.push(
-            ...findMatchesInSeries(label, data.timeframe, liveWindow, hist, {
-              minCorrelation: data.minCorrelation,
-              maxPerAsset: 3,
-              // Nunca comparar com o próprio trecho ao vivo.
-              excludeFrom: iqName === liveName ? liveStart : undefined,
-            }),
-          );
-        } catch (error) {
-          if (error instanceof IqOptionBackoffError) throw error;
-          skipped.push(label);
-        }
-        await sleep(200);
-      }
-
-      all.sort((a, b) => b.correlation - a.correlation);
-      const matches = all.slice(0, MAX_MATCHES);
-
-      return {
-        liveWindow,
-        matches,
-        consensus: consensusOf(matches),
-        scannedAssets,
-        scannedCandles,
-        skippedAssets: skipped,
-      };
-    } catch (error) {
-      console.error("[mirror] search failed", error);
-      if (error instanceof IqOptionBackoffError) {
-        return {
-          ...empty,
-          error: "Conexão com a corretora em recuperação. Tente novamente em instantes.",
-        };
-      }
-      return { ...empty, error: "Não foi possível concluir a varredura agora." };
-    }
-  });
-
-// ---------------------------------------------------------------------------
-// Varredura global: sem escolher ativo ao vivo. Baixa o histórico de um lote de
-// ativos uma única vez e cruza o trecho atual de cada um contra o histórico de
-// todos os outros (e do próprio, em outra data), nas quatro leituras.
-// ---------------------------------------------------------------------------
-
-const scanSchema = z.object({
+const chunkSchema = z.object({
   timeframe: z.enum(["M1", "M5", "M15"]),
   windowSize: z.number().int().min(12).max(60).default(24),
-  /** Catálogo completo de ativos; o servidor limita quantos entram no lote. */
-  assets: z.array(z.string()).min(1).max(400),
-  /** Quantos ativos deste lote serão varridos nesta rodada. */
-  maxAssets: z.number().int().min(2).max(40).default(14),
-  /** Deslocamento no catálogo, para varrer o resto em rodadas seguintes. */
+  /** Catálogo completo de ativos da corretora. */
+  assets: z.array(z.string()).min(1).max(600),
   offset: z.number().int().min(0).default(0),
-  historyBlocks: z.number().int().min(1).max(12).default(4),
+  limit: z.number().int().min(1).max(24).default(10),
+  historyBlocks: z.number().int().min(1).max(6).default(2),
   minCorrelation: z.number().min(0.7).max(0.999).default(0.93),
+  /**
+   * "collect" baixa o histórico deste trecho do catálogo.
+   * "match" cruza o trecho atual destes ativos contra TODO o histórico coletado.
+   */
+  phase: z.enum(["collect", "match"]),
 });
 
 export interface MirrorAssetGroup {
@@ -178,76 +107,105 @@ export interface MirrorAssetGroup {
   consensus: MirrorConsensus;
 }
 
-export interface MirrorScanResult {
+export interface MirrorChunkResult {
+  phase: "collect" | "match";
   groups: MirrorAssetGroup[];
-  scannedAssets: number;
-  scannedCandles: number;
+  /** Ativos processados nesta chamada. */
+  processed: number;
+  /** Ativos com histórico disponível na memória da varredura. */
+  storedAssets: number;
+  storedCandles: number;
   skippedAssets: string[];
-  /** Próximo deslocamento no catálogo (null quando o catálogo terminou). */
   nextOffset: number | null;
   totalAssets: number;
   error?: string;
 }
 
-/** Varre todos os ativos do lote procurando repetições entre eles e no passado. */
-export const scanAllMirrors = createServerFn({ method: "POST" })
+/**
+ * Uma etapa da varredura global. O navegador chama em sequência até cobrir todo
+ * o catálogo: primeiro coletando o histórico de todos os ativos, depois cruzando
+ * cada ativo ao vivo contra o histórico de todos os outros.
+ */
+export const mirrorScanChunk = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) => scanSchema.parse(input))
-  .handler(async ({ data }): Promise<MirrorScanResult> => {
+  .inputValidator((input: unknown) => chunkSchema.parse(input))
+  .handler(async ({ data }): Promise<MirrorChunkResult> => {
     const { fetchCandles, IqOptionBackoffError } = await import("@/lib/iqoption/iqoption.server");
     const size = timeframeSeconds(data.timeframe);
+    const catalog = buildCatalog(data.assets);
+    const store = storeFor(data.timeframe);
 
-    const empty: MirrorScanResult = {
-      groups: [],
-      scannedAssets: 0,
-      scannedCandles: 0,
-      skippedAssets: [],
-      nextOffset: null,
-      totalAssets: data.assets.length,
+    const countCandles = () => {
+      let total = 0;
+      for (const s of store.values()) total += s.history.length;
+      return total;
     };
 
-    // Deduplica pelo nome reconhecido pela corretora, preservando a ordem.
-    const catalog: Array<{ iqName: string; label: string }> = [];
-    const seen = new Set<string>();
-    for (const symbol of data.assets) {
-      const iqName = getIqOptionName(symbol);
-      if (!iqName || seen.has(iqName)) continue;
-      seen.add(iqName);
-      catalog.push({ iqName, label: symbol });
+    const base: MirrorChunkResult = {
+      phase: data.phase,
+      groups: [],
+      processed: 0,
+      storedAssets: store.size,
+      storedCandles: countCandles(),
+      skippedAssets: [],
+      nextOffset: null,
+      totalAssets: catalog.length,
+    };
+
+    if (catalog.length === 0) {
+      return { ...base, error: "Nenhum ativo reconhecido pela corretora." };
     }
 
-    const start = Math.min(data.offset, Math.max(catalog.length - 1, 0));
-    const batch = catalog.slice(start, start + data.maxAssets);
-    const nextOffset = start + batch.length < catalog.length ? start + batch.length : null;
-
-    if (batch.length === 0) {
-      return { ...empty, totalAssets: catalog.length, error: "Nenhum ativo reconhecido pela corretora." };
-    }
+    const batch = catalog.slice(data.offset, data.offset + data.limit);
+    const nextOffset = data.offset + batch.length < catalog.length ? data.offset + batch.length : null;
+    if (batch.length === 0) return { ...base, nextOffset: null };
 
     try {
-      const series = new Map<string, { label: string; history: MirrorCandle[] }>();
-      const skipped: string[] = [];
-      let scannedCandles = 0;
-
-      for (const { iqName, label } of batch) {
-        try {
-          const history = await loadHistory(fetchCandles, iqName, size, data.historyBlocks);
-          if (history.length < data.windowSize + 4) {
-            skipped.push(label);
+      if (data.phase === "collect") {
+        const skipped: string[] = [];
+        let processed = 0;
+        for (const { iqName, label } of batch) {
+          const existing = store.get(iqName);
+          if (existing && existing.at > Date.now() - STORE_TTL_MS) {
+            processed++;
             continue;
           }
-          series.set(iqName, { label, history });
-          scannedCandles += history.length;
-        } catch (error) {
-          if (error instanceof IqOptionBackoffError) throw error;
-          skipped.push(label);
+          try {
+            const history = await loadHistory(fetchCandles, iqName, size, data.historyBlocks);
+            if (history.length < data.windowSize + 6) {
+              skipped.push(label);
+              continue;
+            }
+            store.set(iqName, { label, history, index: buildSeriesIndex(history), at: Date.now() });
+            processed++;
+          } catch (error) {
+            if (error instanceof IqOptionBackoffError) throw error;
+            skipped.push(label);
+          }
+          await sleep(120);
         }
-        await sleep(200);
+        return {
+          ...base,
+          processed,
+          storedAssets: store.size,
+          storedCandles: countCandles(),
+          skippedAssets: skipped,
+          nextOffset,
+        };
       }
 
+      // ---- fase de cruzamento: nenhuma requisição à corretora ----
       const groups: MirrorAssetGroup[] = [];
+      const skipped: string[] = [];
+      let processed = 0;
 
-      for (const [liveName, live] of series) {
+      for (const { iqName } of batch) {
+        const live = store.get(iqName);
+        if (!live) {
+          skipped.push(iqName);
+          continue;
+        }
+        processed++;
         // A última vela pode estar em formação: só velas fechadas entram.
         const closed = live.history.slice(0, -1);
         const liveWindow = closed.slice(-(data.windowSize + 1));
@@ -255,17 +213,19 @@ export const scanAllMirrors = createServerFn({ method: "POST" })
         const liveStart = liveWindow[0]!.time;
 
         const found: MirrorMatch[] = [];
-        for (const [histName, hist] of series) {
+        for (const [histName, hist] of store) {
           found.push(
-            ...findMatchesInSeries(hist.label, data.timeframe, liveWindow, hist.history, {
+            ...findMatchesFast(hist.label, data.timeframe, liveWindow, hist.history, hist.index, {
               minCorrelation: data.minCorrelation,
               maxPerAsset: 3,
-              excludeFrom: histName === liveName ? liveStart : undefined,
-            }),
+              excludeFrom: histName === iqName ? liveStart : undefined,
+              projectionSteps: PROJECTION_STEPS,
+              stepSeconds: size,
+            }).filter((m) => m.projection.length >= PROJECTION_STEPS),
           );
         }
-
         if (found.length === 0) continue;
+
         found.sort((a, b) => b.correlation - a.correlation);
         const matches = found.slice(0, MAX_MATCHES);
         groups.push({
@@ -276,27 +236,26 @@ export const scanAllMirrors = createServerFn({ method: "POST" })
         });
       }
 
-      // Ativos com a repetição mais forte aparecem primeiro.
       groups.sort((a, b) => (b.matches[0]?.correlation ?? 0) - (a.matches[0]?.correlation ?? 0));
 
       return {
+        ...base,
         groups,
-        scannedAssets: series.size,
-        scannedCandles,
+        processed,
+        storedAssets: store.size,
+        storedCandles: countCandles(),
         skippedAssets: skipped,
         nextOffset,
-        totalAssets: catalog.length,
       };
     } catch (error) {
-      console.error("[mirror] global scan failed", error);
+      console.error("[mirror] scan chunk failed", error);
       if (error instanceof IqOptionBackoffError) {
         return {
-          ...empty,
-          totalAssets: catalog.length,
+          ...base,
           nextOffset,
-          error: "Conexão com a corretora em recuperação. Tente novamente em instantes.",
+          error: "Conexão com a corretora em recuperação. Retomando em instantes.",
         };
       }
-      return { ...empty, totalAssets: catalog.length, nextOffset, error: "Não foi possível concluir a varredura agora." };
+      return { ...base, nextOffset, error: "Não foi possível concluir esta etapa da varredura." };
     }
   });
