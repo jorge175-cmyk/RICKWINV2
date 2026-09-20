@@ -37,7 +37,8 @@ function authenticateCronRequest(request: Request): Response | null {
 
 const LIVE_CHUNK = 5;
 const HAYSTACK_CHUNK = 10;
-const WINDOW_SIZE = 40;
+/** 5 velas idênticas seguidas já contam como replay — janelas longas quase nunca repetem. */
+const WINDOW_SIZE = 5;
 const MIN_CORRELATION = 0.93;
 /** Fatias processadas por chamada — mais de uma reduz quantas vezes o cron precisa disparar. */
 const SLICES_PER_RUN = 2;

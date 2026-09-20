@@ -321,7 +321,9 @@ export function findMatchesInSeries(
 
   const liveReturns = closeReturns(live);
   const k = liveReturns.length;
-  if (k < 6 || hist.length < k + 3) return [];
+  // Sequências curtas são aceitas de propósito: o objetivo é achar 5 velas
+  // idênticas seguidas, não um trecho longo inteiro (que quase nunca repete).
+  if (k < 4 || hist.length < k + 3) return [];
   const liveVol = stdev(liveReturns);
   if (!(liveVol > 0)) return [];
   const liveLastClose = live[live.length - 1]!.close;
@@ -453,7 +455,7 @@ export function findMatchesFast(
   const liveReturns = closeReturns(live);
   const k = liveReturns.length;
   const m = index.rets.length;
-  if (k < 6 || m < k + 3) return [];
+  if (k < 4 || m < k + 3) return [];
 
   const liveStats = popStats(
     liveReturns.reduce((a, v) => a + v, 0),
