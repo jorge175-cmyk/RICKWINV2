@@ -79,7 +79,7 @@ const CLOCK_FMT = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2
 
 function MirrorPage() {
   const [timeframe, setTimeframe] = useState("M1");
-  const [windowSize, setWindowSize] = useState(40);
+  const [windowSize, setWindowSize] = useState(5);
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   /** Progresso das fatias do palheiro (catálogo) DENTRO do lote de ativos ao vivo atual. */
@@ -543,7 +543,7 @@ function MirrorPage() {
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-muted-foreground">Velas comparadas</label>
               <div className="flex gap-1.5">
-                {[16, 24, 40].map((size) => (
+                {[5, 8, 12, 16].map((size) => (
                   <Button
                     key={size}
                     variant={windowSize === size ? "default" : "outline"}

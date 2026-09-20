@@ -41,7 +41,7 @@ const PROJECTION_STEPS = 20;
  * no tempo, que projeta "pra trás" no array). 5 é o suficiente para valer a
  * pena mostrar, mesmo quando não há espaço para as 20.
  */
-const MIN_PROJECTION_STEPS = 5;
+const MIN_PROJECTION_STEPS = 1;
 /**
  * Concorrência para ler o arquivo do banco na etapa de cruzamento. Mais alta
  * que SCAN_CONCURRENCY porque é só leitura de banco, sem limite da corretora.
@@ -165,7 +165,7 @@ const candleSchema = z.object({
 
 const chunkSchema = z.object({
   timeframe: z.enum(["M1", "M5", "M15"]),
-  windowSize: z.number().int().min(12).max(60).default(24),
+  windowSize: z.number().int().min(5).max(60).default(6),
   /** Catálogo completo de ativos da corretora. */
   assets: z.array(z.string()).min(1).max(600),
   offset: z.number().int().min(0).default(0),
