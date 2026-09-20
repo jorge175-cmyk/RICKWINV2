@@ -31,7 +31,10 @@ type QuoteHandler = (quote: LiveQuote) => void;
 type StatusHandler = (status: StreamStatus, error?: string) => void;
 
 const PROXY_PATH = "/api/public/iqoption-ws";
-const ZOMBIE_TIMEOUT_MS = 45_000;
+// Quiet OTC assets can go a long while without a printable frame. The proxy
+// also sends its own keepalive, so anything under a minute produced false
+// "zombie" verdicts and constant channel churn.
+
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const WATCHDOG_INTERVAL_MS = 5_000;
 // Batched fan-out for the full asset catalogue over the single channel.
@@ -40,7 +43,36 @@ const QUOTE_BATCH_DELAY_MS = 400;
 // The upstream session is reused, so reconnecting is cheap: retry fast and
 // cap the delay low so a dropped channel resumes within seconds.
 const MAX_RECONNECT_DELAY_MS = 30_000;
+// Asset catalogue tolerance: a slow provider answer must never turn into a
+// failed connection. The last known catalogue is reused instead.
+const CATALOGUE_WAIT_MS = 2_500;
+const CATALOGUE_CACHE_KEY = "iq-active-ids";
+const CATALOGUE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+// Zombie-socket thresholds per trigger (tab focus is the strictest).
+const FRESH_ON_FOCUS_MS = 20_000;
+const FRESH_BACKGROUND_MS = 60_000;
 
+function readCachedActiveIds(): Record<string, number> | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(CATALOGUE_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { at?: number; map?: Record<string, number> };
+    if (!parsed.map || !parsed.at || Date.now() - parsed.at > CATALOGUE_CACHE_TTL_MS) return null;
+    return Object.keys(parsed.map).length > 0 ? parsed.map : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedActiveIds(map: Record<string, number>) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(CATALOGUE_CACHE_KEY, JSON.stringify({ at: Date.now(), map }));
+  } catch {
+    /* storage unavailable */
+  }
+}
 
 class IqOptionClient {
   private socket: WebSocket | null = null;
@@ -61,6 +93,32 @@ class IqOptionClient {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private nextReconnectAt = 0;
+  private catalogueRefresh: Promise<void> | null = null;
+
+  constructor() {
+    if (typeof window === "undefined") return;
+    // Browsers freeze background tabs: the socket stays OPEN while no frame
+    // arrives. These triggers prove liveness the moment the user comes back.
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") this.ensureFresh(FRESH_ON_FOCUS_MS);
+    });
+    window.addEventListener("focus", () => this.ensureFresh(FRESH_ON_FOCUS_MS));
+    window.addEventListener("online", () => this.ensureFresh(0));
+  }
+
+  /**
+   * Forces recovery when no frame (market data OR heartbeat) arrived within
+   * `maxIdleMs`. Anything fresher is treated as a healthy channel.
+   */
+  ensureFresh(maxIdleMs: number) {
+    if (!this.hasSubscriptions()) return;
+    if (this.connecting || this.reconnectTimer) return;
+    if (this.socket?.readyState === WebSocket.CONNECTING) return;
+    const idle = Date.now() - this.lastFrameAt;
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN || idle > maxIdleMs) {
+      this.hardReconnect(true);
+    }
+  }
 
   getStatus() {
     return this.status;
@@ -236,21 +294,62 @@ class IqOptionClient {
     return this.connecting;
   }
 
+  private applyCatalogue(map: Record<string, number>) {
+    if (Object.keys(map).length === 0) return false;
+    this.activeIds = map;
+    this.idToName.clear();
+    for (const [name, id] of Object.entries(map)) {
+      if (!this.idToName.has(id)) this.idToName.set(id, name);
+    }
+    return true;
+  }
+
+  /** Re-sends every subscription; used after reconnects and catalogue refreshes. */
+  private resubscribeAll() {
+    for (const { asset, sizeSeconds } of this.subscriptions.values()) {
+      this.sendCandleSubscribe(asset, sizeSeconds);
+    }
+    for (const { asset } of this.quoteSubscriptions.values()) this.sendQuoteSubscribe(asset);
+  }
+
+  /**
+   * Tolerant catalogue load: waits a short moment for the provider, otherwise
+   * falls back to the last known map so a slow answer never becomes an error
+   * loop. The refresh keeps running and re-subscribes when it lands.
+   */
+  private async ensureCatalogue(): Promise<void> {
+    if (this.activeIds && Object.keys(this.activeIds).length > 0) return;
+
+    if (!this.catalogueRefresh) {
+      this.catalogueRefresh = getActiveIds()
+        .then((map) => {
+          if (this.applyCatalogue(map)) {
+            writeCachedActiveIds(map);
+            if (this.socket?.readyState === WebSocket.OPEN) this.resubscribeAll();
+          }
+        })
+        .catch(() => {
+          /* handled by the fallback below */
+        })
+        .finally(() => {
+          this.catalogueRefresh = null;
+        });
+    }
+
+    await Promise.race([
+      this.catalogueRefresh,
+      new Promise<void>((resolve) => setTimeout(resolve, CATALOGUE_WAIT_MS)),
+    ]);
+
+    if (this.activeIds && Object.keys(this.activeIds).length > 0) return;
+    const cached = readCachedActiveIds();
+    if (cached) this.applyCatalogue(cached);
+  }
+
   private async connect(): Promise<void> {
     this.setStatus("connecting");
     try {
-      if (!this.activeIds || Object.keys(this.activeIds).length === 0) {
-        const activeIds = await getActiveIds();
-        if (Object.keys(activeIds).length === 0) {
-          this.activeIds = null;
-          throw new Error("IQ Option asset list temporarily unavailable");
-        }
-        this.activeIds = activeIds;
-        this.idToName.clear();
-        for (const [name, id] of Object.entries(this.activeIds)) {
-          if (!this.idToName.has(id)) this.idToName.set(id, name);
-        }
-      }
+      await this.ensureCatalogue();
 
       const { data } = await supabase.auth.getSession();
       const token = data.session?.access_token;
@@ -282,12 +381,7 @@ class IqOptionClient {
                 this.lastFrameAt = Date.now();
                 this.reconnectAttempts = 0;
                 this.setStatus("live");
-                for (const { asset, sizeSeconds } of this.subscriptions.values()) {
-                  this.sendCandleSubscribe(asset, sizeSeconds);
-                }
-                for (const { asset } of this.quoteSubscriptions.values()) {
-                  this.sendQuoteSubscribe(asset);
-                }
+                this.resubscribeAll();
                 this.startWatchdog();
                 resolve();
               }
@@ -387,13 +481,8 @@ class IqOptionClient {
       }, HEARTBEAT_INTERVAL_MS);
     }
     if (this.watchdog) return;
-    this.watchdog = setInterval(() => {
-      if (!this.hasSubscriptions()) return;
-      const stale = Date.now() - this.lastFrameAt > ZOMBIE_TIMEOUT_MS;
-      if (stale || !this.socket || this.socket.readyState !== WebSocket.OPEN) {
-        this.hardReconnect();
-      }
-    }, WATCHDOG_INTERVAL_MS);
+    // Background check with a looser threshold; focus/network use tighter ones.
+    this.watchdog = setInterval(() => this.ensureFresh(FRESH_BACKGROUND_MS), WATCHDOG_INTERVAL_MS);
   }
 
   private scheduleReconnect() {
@@ -410,7 +499,7 @@ class IqOptionClient {
 
   /** Immediate recovery: used by the watchdog and on tab focus / network back. */
   hardReconnect(force = false) {
-    if (!force && Date.now() < this.nextReconnectAt) return;
+    if (!force && (this.connecting || Date.now() < this.nextReconnectAt)) return;
     if (force) {
       this.nextReconnectAt = 0;
       this.reconnectAttempts = 0;

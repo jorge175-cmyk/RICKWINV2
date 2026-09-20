@@ -10,8 +10,9 @@ import { MirrorMatchCard } from "@/components/trading/MirrorMatchCard";
 import { getOtcAssets } from "@/lib/iqoption/candles.functions";
 import { mirrorScanChunk, type MirrorAssetGroup } from "@/lib/analysis/mirror.functions";
 import { mirrorVerdict, type MirrorVerdict } from "@/lib/analysis/mirrorVerdict.functions";
+import { useIqOptionConnection } from "@/lib/iqoption/useIqOptionStream";
 import { toast } from "sonner";
-import { ArrowLeft, Copy, Loader2, Search, Sparkles, StopCircle } from "lucide-react";
+import { ArrowLeft, Copy, Loader2, Search, Sparkles, StopCircle, Wifi, WifiOff } from "lucide-react";
 
 const FALLBACK_ASSETS = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CHF", "USD/CAD"];
 const CHUNK = 10;
@@ -57,6 +58,9 @@ function MirrorPage() {
   const [verdicts, setVerdicts] = useState<Record<string, MirrorVerdict>>({});
   const [pendingVerdict, setPendingVerdict] = useState<string | null>(null);
   const cancelRef = useRef(false);
+  /** O canal ao vivo só abre quando a varredura começa. */
+  const [streamOn, setStreamOn] = useState(false);
+  const { status: connectionStatus, error: connectionError } = useIqOptionConnection(streamOn);
 
   const { data: otcAssets = [] } = useQuery({
     queryKey: ["otcAssets"],
@@ -90,6 +94,7 @@ function MirrorPage() {
       return;
     }
     cancelRef.current = false;
+    setStreamOn(true);
     setGroups([]);
     setVerdicts({});
     setSkipped(0);
@@ -192,12 +197,46 @@ function MirrorPage() {
             </div>
             <span className="font-display text-lg font-bold tracking-tight">Espelho OTC</span>
           </div>
-          <Button asChild variant="ghost" size="sm" className="gap-2 text-muted-foreground">
-            <Link to="/trading">
-              <ArrowLeft className="h-4 w-4" />
-              <span className="hidden sm:inline">Análises</span>
-            </Link>
-          </Button>
+          <div className="flex items-center gap-3">
+            {connectionStatus === "live" ? (
+              <Badge
+                variant="outline"
+                className="gap-1.5 border-call/40 bg-call/10 text-call"
+                title="Recebendo dados ao vivo da corretora"
+              >
+                <Wifi className="h-3.5 w-3.5" />
+                Conectado
+              </Badge>
+            ) : !streamOn ? (
+              <Badge
+                variant="outline"
+                className="gap-1.5 border-border/60 bg-muted/30 text-muted-foreground"
+                title="A conexão é aberta somente ao iniciar a varredura"
+              >
+                <WifiOff className="h-3.5 w-3.5" />
+                Aguardando varredura
+              </Badge>
+            ) : (
+              <Badge
+                variant="outline"
+                className="gap-1.5 border-put/40 bg-put/10 text-put"
+                title={connectionError ?? "Sem canal ao vivo com a corretora"}
+              >
+                <WifiOff className="h-3.5 w-3.5" />
+                {connectionStatus === "connecting"
+                  ? "Conectando…"
+                  : connectionStatus === "polling"
+                    ? "Sem streaming"
+                    : "Desconectado"}
+              </Badge>
+            )}
+            <Button asChild variant="ghost" size="sm" className="gap-2 text-muted-foreground">
+              <Link to="/trading">
+                <ArrowLeft className="h-4 w-4" />
+                <span className="hidden sm:inline">Análises</span>
+              </Link>
+            </Button>
+          </div>
         </div>
       </header>
 

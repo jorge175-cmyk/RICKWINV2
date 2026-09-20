@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { candleStore, type CandleSnapshot } from "./candleStore";
 import { getIqOptionName, timeframeSeconds } from "./mapping";
+import { iqOptionClient, type StreamStatus } from "./iqOptionClient";
 
 const EMPTY: CandleSnapshot = {
   candles: [],
@@ -37,6 +38,42 @@ export function useIqOptionStream(symbol: string | null | undefined, timeframe: 
     status: snapshot.status,
     error: snapshot.error,
   };
+}
+
+/**
+ * Live connection status for pages that don't render a chart themselves.
+ * Keeps one asset warm so the shared channel stays monitored and reconnects
+ * on its own while the page is open.
+ */
+export function useIqOptionConnection(enabled = true, warmAsset = "EUR/USD") {
+  const [status, setStatus] = useState<StreamStatus>(
+    enabled ? iqOptionClient.getStatus() : "idle",
+  );
+  const [error, setError] = useState<string | undefined>(
+    enabled ? iqOptionClient.getError() : undefined,
+  );
+
+  useEffect(() => {
+    // Sem `enabled` nenhuma conexão é aberta: evita canais ociosos e bloqueios.
+    if (!enabled) {
+      setStatus("idle");
+      setError(undefined);
+      return;
+    }
+    const asset = getIqOptionName(warmAsset);
+    if (!asset) return;
+    const keepWarm = candleStore.keepWarm(asset, timeframeSeconds("M1"));
+    const off = iqOptionClient.onStatus((next, nextError) => {
+      setStatus(next);
+      setError(nextError);
+    });
+    return () => {
+      off();
+      keepWarm();
+    };
+  }, [enabled, warmAsset]);
+
+  return { status, error, connected: status === "live" };
 }
 
 /** Keeps a pair warm in the background without rendering it. */
