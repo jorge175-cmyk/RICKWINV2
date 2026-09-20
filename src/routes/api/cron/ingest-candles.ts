@@ -94,7 +94,18 @@ export const Route = createFileRoute("/api/cron/ingest-candles")({
           );
         }
 
-        return Response.json({ ok: true, timeframe, assetCount, saved, skipped });
+        // Vela nova salva → analisa na hora se as 5 últimas velas de cada ativo
+        // estão repetindo algum trecho já existente no arquivo histórico.
+        let replay: unknown = null;
+        try {
+          const { runReplayCheck } = await import("@/lib/analysis/replayCheck.server");
+          replay = await runReplayCheck(timeframe);
+        } catch (error) {
+          console.error("[ingest-candles] verificação de replay falhou", error);
+          replay = { ok: false, error: String(error) };
+        }
+
+        return Response.json({ ok: true, timeframe, assetCount, saved, skipped, replay });
       },
     },
   },
