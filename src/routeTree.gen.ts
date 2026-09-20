@@ -14,8 +14,6 @@ import { Route as LayoutRouteImport } from './routes/_layout'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as LayoutMirrorRouteImport } from './routes/_layout/mirror'
 import { Route as LayoutTradingRouteImport } from './routes/_layout/trading'
-import { Route as ApiCronIngestCandlesRouteImport } from './routes/api/cron/ingest-candles'
-import { Route as ApiCronMirrorScanRouteImport } from './routes/api/cron/mirror-scan'
 import { Route as ApiPublicIqoptionWsRouteImport } from './routes/api/public/iqoption-ws'
 
 const IndexRoute = IndexRouteImport.update({
@@ -42,16 +40,6 @@ const LayoutTradingRoute = LayoutTradingRouteImport.update({
   path: '/trading',
   getParentRoute: () => LayoutRoute,
 } as any)
-const ApiCronIngestCandlesRoute = ApiCronIngestCandlesRouteImport.update({
-  id: '/api/cron/ingest-candles',
-  path: '/api/cron/ingest-candles',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiCronMirrorScanRoute = ApiCronMirrorScanRouteImport.update({
-  id: '/api/cron/mirror-scan',
-  path: '/api/cron/mirror-scan',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ApiPublicIqoptionWsRoute = ApiPublicIqoptionWsRouteImport.update({
   id: '/api/public/iqoption-ws',
   path: '/api/public/iqoption-ws',
@@ -63,8 +51,6 @@ export interface FileRoutesByFullPath {
   '/auth': typeof AuthRoute
   '/mirror': typeof LayoutMirrorRoute
   '/trading': typeof LayoutTradingRoute
-  '/api/cron/ingest-candles': typeof ApiCronIngestCandlesRoute
-  '/api/cron/mirror-scan': typeof ApiCronMirrorScanRoute
   '/api/public/iqoption-ws': typeof ApiPublicIqoptionWsRoute
 }
 export interface FileRoutesByTo {
@@ -72,8 +58,6 @@ export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
   '/mirror': typeof LayoutMirrorRoute
   '/trading': typeof LayoutTradingRoute
-  '/api/cron/ingest-candles': typeof ApiCronIngestCandlesRoute
-  '/api/cron/mirror-scan': typeof ApiCronMirrorScanRoute
   '/api/public/iqoption-ws': typeof ApiPublicIqoptionWsRoute
 }
 export interface FileRoutesById {
@@ -83,29 +67,13 @@ export interface FileRoutesById {
   '/auth': typeof AuthRoute
   '/_layout/mirror': typeof LayoutMirrorRoute
   '/_layout/trading': typeof LayoutTradingRoute
-  '/api/cron/ingest-candles': typeof ApiCronIngestCandlesRoute
-  '/api/cron/mirror-scan': typeof ApiCronMirrorScanRoute
   '/api/public/iqoption-ws': typeof ApiPublicIqoptionWsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths:
-    | '/'
-    | '/auth'
-    | '/mirror'
-    | '/trading'
-    | '/api/cron/ingest-candles'
-    | '/api/cron/mirror-scan'
-    | '/api/public/iqoption-ws'
+  fullPaths: '/' | '/auth' | '/mirror' | '/trading' | '/api/public/iqoption-ws'
   fileRoutesByTo: FileRoutesByTo
-  to:
-    | '/'
-    | '/auth'
-    | '/mirror'
-    | '/trading'
-    | '/api/cron/ingest-candles'
-    | '/api/cron/mirror-scan'
-    | '/api/public/iqoption-ws'
+  to: '/' | '/auth' | '/mirror' | '/trading' | '/api/public/iqoption-ws'
   id:
     | '__root__'
     | '/'
@@ -113,8 +81,6 @@ export interface FileRouteTypes {
     | '/auth'
     | '/_layout/mirror'
     | '/_layout/trading'
-    | '/api/cron/ingest-candles'
-    | '/api/cron/mirror-scan'
     | '/api/public/iqoption-ws'
   fileRoutesById: FileRoutesById
 }
@@ -122,8 +88,6 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LayoutRoute: typeof LayoutRouteWithChildren
   AuthRoute: typeof AuthRoute
-  ApiCronIngestCandlesRoute: typeof ApiCronIngestCandlesRoute
-  ApiCronMirrorScanRoute: typeof ApiCronMirrorScanRoute
   ApiPublicIqoptionWsRoute: typeof ApiPublicIqoptionWsRoute
 }
 
@@ -164,20 +128,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutTradingRouteImport
       parentRoute: typeof LayoutRoute
     }
-    '/api/cron/ingest-candles': {
-      id: '/api/cron/ingest-candles'
-      path: '/api/cron/ingest-candles'
-      fullPath: '/api/cron/ingest-candles'
-      preLoaderRoute: typeof ApiCronIngestCandlesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/cron/mirror-scan': {
-      id: '/api/cron/mirror-scan'
-      path: '/api/cron/mirror-scan'
-      fullPath: '/api/cron/mirror-scan'
-      preLoaderRoute: typeof ApiCronMirrorScanRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/api/public/iqoption-ws': {
       id: '/api/public/iqoption-ws'
       path: '/api/public/iqoption-ws'
@@ -205,8 +155,6 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LayoutRoute: LayoutRouteWithChildren,
   AuthRoute: AuthRoute,
-  ApiCronIngestCandlesRoute: ApiCronIngestCandlesRoute,
-  ApiCronMirrorScanRoute: ApiCronMirrorScanRoute,
   ApiPublicIqoptionWsRoute: ApiPublicIqoptionWsRoute,
 }
 export const routeTree = rootRouteImport

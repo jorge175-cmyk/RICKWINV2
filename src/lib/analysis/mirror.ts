@@ -13,20 +13,6 @@ export interface MirrorCandle {
 
 export type MirrorTransform = "DIRECT" | "TIME_REVERSED" | "PRICE_INVERTED" | "BOTH";
 
-export interface MirrorProjectedStep {
-  /** 1 = próxima vela, 2 = a seguinte, e assim por diante. */
-  step: number;
-  /** Horário previsto da vela no mercado ao vivo (epoch segundos). */
-  time: number;
-  /** Retorno projetado da vela, em fração (0.0012 = +0,12%). */
-  ret: number;
-  direction: "CALL" | "PUT";
-  /** Fechamento projetado acumulado sobre o último fechamento ao vivo. */
-  close: number;
-  /** Vela histórica que originou a projeção. */
-  source: MirrorCandle;
-}
-
 export interface MirrorMatch {
   asset: string;
   timeframe: string;
@@ -35,13 +21,6 @@ export interface MirrorMatch {
   correlation: number;
   /** Semelhança em porcentagem, arredondada. */
   similarity: number;
-  /**
-   * Desvio máximo, vela por vela (corpo, pavios e fechamento), em fração do
-   * tamanho típico da vela ao vivo. 0 = replay perfeito.
-   */
-  maxDeviation: number;
-  /** true quando o trecho é um replay praticamente exato (não só parecido). */
-  exact: boolean;
   /** Início e fim (epoch segundos) do trecho histórico encontrado. */
   startTime: number;
   endTime: number;
@@ -56,8 +35,6 @@ export interface MirrorMatch {
   window: MirrorCandle[];
   /** A vela que veio depois (ou antes, no espelho de tempo) do trecho. */
   nextCandle: MirrorCandle | null;
-  /** Sequência das próximas velas projetadas (mínimo 5 quando há histórico). */
-  projection: MirrorProjectedStep[];
 }
 
 export interface MirrorSearchOptions {
@@ -69,94 +46,9 @@ export interface MirrorSearchOptions {
   maxPerAsset?: number;
   /** Não comparar com trechos que se sobrepõem à própria janela ao vivo. */
   excludeFrom?: number | undefined;
-  /** Quantas velas à frente projetar (padrão 5). */
-  projectionSteps?: number;
-  /** Duração da vela em segundos, para datar as velas projetadas. */
-  stepSeconds?: number;
-  /**
-   * Só aceita replay exato: cada vela do trecho histórico tem de reproduzir a
-   * vela ao vivo (corpo, máximo, mínimo e fechamento). Padrão: true.
-   */
-  exactOnly?: boolean;
-  /**
-   * Desvio máximo tolerado por vela, em fração do tamanho típico da vela ao
-   * vivo. 0.03 = até 3% de diferença — ainda lido como a mesma vela.
-   */
-  exactTolerance?: number;
-}
-
-/**
- * Perfil da vela normalizado pelo próprio preço de abertura: descreve a forma
- * (corpo e pavios) sem depender do nível de preço do ativo, o que permite
- * reconhecer o mesmo desenho em ativos e datas diferentes.
- */
-function candleShape(c: MirrorCandle): [number, number, number] {
-  const base = c.open > 0 ? c.open : 1;
-  return [(c.high - base) / base, (c.low - base) / base, (c.close - base) / base];
-}
-
-/** A mesma vela lida de trás pra frente: abertura e fechamento trocam de papel. */
-function reverseCandle(c: MirrorCandle): MirrorCandle {
-  return { ...c, open: c.close, close: c.open };
-}
-
-/** A mesma vela refletida no eixo de preço: máximo e mínimo trocam de papel. */
-function invertCandle(c: MirrorCandle, pivot: number): MirrorCandle {
-  return {
-    ...c,
-    open: 2 * pivot - c.open,
-    close: 2 * pivot - c.close,
-    high: 2 * pivot - c.low,
-    low: 2 * pivot - c.high,
-  };
-}
-
-/**
- * Compara vela por vela o trecho histórico (já na leitura escolhida) com a
- * janela ao vivo e devolve o maior desvio encontrado, em fração do tamanho
- * típico da vela ao vivo. Valores próximos de 0 significam replay exato.
- */
-function replayDeviation(
-  live: MirrorCandle[],
-  window: MirrorCandle[],
-  transform: MirrorTransform,
-): number {
-  if (live.length !== window.length || live.length === 0) return Number.POSITIVE_INFINITY;
-
-  const readsBackwards = transform === "TIME_REVERSED" || transform === "BOTH";
-  const invertsPrice = transform === "PRICE_INVERTED" || transform === "BOTH";
-  let seq = readsBackwards ? [...window].reverse().map(reverseCandle) : [...window];
-  if (invertsPrice) {
-    const pivot = seq[0]!.open > 0 ? seq[0]!.open : 1;
-    seq = seq.map((c) => invertCandle(c, pivot));
-  }
-
-  // Tamanho típico da vela ao vivo: escala de referência para o desvio.
-  let amplitude = 0;
-  for (const c of live) amplitude += c.open > 0 ? (c.high - c.low) / c.open : 0;
-  amplitude = amplitude / live.length;
-  if (!(amplitude > 0)) return Number.POSITIVE_INFINITY;
-
-  let worst = 0;
-  for (let i = 0; i < live.length; i++) {
-    const a = candleShape(live[i]!);
-    const b = candleShape(seq[i]!);
-    for (let j = 0; j < 3; j++) {
-      const diff = Math.abs(a[j]! - b[j]!) / amplitude;
-      if (diff > worst) worst = diff;
-    }
-  }
-  return worst;
 }
 
 const TRANSFORMS: MirrorTransform[] = ["DIRECT", "TIME_REVERSED", "PRICE_INVERTED", "BOTH"];
-
-/** Duração da vela deduzida dos horários da janela ao vivo (fallback: 60s). */
-export function inferStepSeconds(candles: MirrorCandle[]): number {
-  if (candles.length < 2) return 60;
-  const diff = candles[candles.length - 1]!.time - candles[candles.length - 2]!.time;
-  return diff > 0 ? diff : 60;
-}
 
 /** Retornos percentuais entre fechamentos consecutivos. */
 export function closeReturns(candles: MirrorCandle[]): number[] {
@@ -225,79 +117,40 @@ function transformReturns(returns: number[], transform: MirrorTransform): number
 }
 
 /** Índice da vela que representa a "próxima" da sequência, conforme a leitura. */
-function nextIndexFor(
-  startIndex: number,
-  windowLength: number,
-  transform: MirrorTransform,
-): number {
+function nextIndexFor(startIndex: number, windowLength: number, transform: MirrorTransform): number {
   const readsBackwards = transform === "TIME_REVERSED" || transform === "BOTH";
   return readsBackwards ? startIndex - 1 : startIndex + windowLength;
 }
 
-/**
- * Caminho projetado: as próximas `steps` velas da sequência histórica,
- * já convertidas para a leitura atual (espelho de tempo / inversão de preço).
- */
-function projectedPath(
+/** Retorno projetado para a próxima vela, já convertido para a leitura atual. */
+function projectedReturn(
   hist: MirrorCandle[],
   startIndex: number,
   windowLength: number,
   transform: MirrorTransform,
-  steps: number,
-): {
-  value: number;
-  candle: MirrorCandle;
-  path: Array<{ ret: number; source: MirrorCandle }>;
-} | null {
+): { value: number; candle: MirrorCandle } | null {
   const readsBackwards = transform === "TIME_REVERSED" || transform === "BOTH";
-  const firstIdx = nextIndexFor(startIndex, windowLength, transform);
-  const first = hist[firstIdx];
-  if (!first) return null;
+  const nextIdx = nextIndexFor(startIndex, windowLength, transform);
+  const candle = hist[nextIdx];
+  if (!candle) return null;
 
-  let anchorClose = readsBackwards
-    ? hist[firstIdx + 1]!.close
-    : hist[startIndex + windowLength - 1]!.close;
+  let anchorClose: number;
+  let targetClose: number;
+  if (readsBackwards) {
+    // Lendo de trás pra frente, a continuação é a vela anterior ao trecho.
+    anchorClose = hist[nextIdx + 1]!.close;
+    targetClose = candle.close;
+  } else {
+    anchorClose = hist[startIndex + windowLength - 1]!.close;
+    targetClose = candle.close;
+  }
   if (!(anchorClose > 0)) return null;
 
-  const path: Array<{ ret: number; source: MirrorCandle }> = [];
-  for (let i = 0; i < steps; i++) {
-    const idx = readsBackwards ? firstIdx - i : firstIdx + i;
-    const candle = hist[idx];
-    if (!candle || !(anchorClose > 0)) break;
-    let raw = (candle.close - anchorClose) / anchorClose;
-    if (transform === "TIME_REVERSED") raw = -raw; // espelho de tempo inverte o sinal
-    if (transform === "PRICE_INVERTED") raw = -raw;
-    // BOTH: dupla inversão se cancela.
-    path.push({ ret: raw, source: candle });
-    anchorClose = candle.close;
-  }
-  if (path.length === 0) return null;
-  return { value: path[0]!.ret, candle: first, path };
-}
-
-/** Monta a sequência projetada aplicada à escala e ao horário do mercado ao vivo. */
-function buildProjection(
-  path: Array<{ ret: number; source: MirrorCandle }>,
-  ratio: number,
-  liveLastClose: number,
-  liveLastTime: number,
-  stepSeconds: number,
-): MirrorProjectedStep[] {
-  const out: MirrorProjectedStep[] = [];
-  let close = liveLastClose;
-  path.forEach((item, i) => {
-    const scaled = item.ret / (ratio || 1);
-    close = close * (1 + scaled);
-    out.push({
-      step: i + 1,
-      time: liveLastTime + (i + 1) * stepSeconds,
-      ret: scaled,
-      direction: scaled >= 0 ? "CALL" : "PUT",
-      close,
-      source: item.source,
-    });
-  });
-  return out;
+  let raw = (targetClose - anchorClose) / anchorClose;
+  if (transform === "TIME_REVERSED") raw = -raw; // espelho de tempo inverte o sinal
+  if (transform === "PRICE_INVERTED") raw = -raw;
+  if (transform === "BOTH") raw = raw; // dupla inversão se cancela
+  return { value: raw, candle };
 }
 
 /**
@@ -314,20 +167,13 @@ export function findMatchesInSeries(
   const minCorrelation = options.minCorrelation ?? 0.93;
   const tolerance = options.volatilityTolerance ?? 2.4;
   const maxPerAsset = options.maxPerAsset ?? 3;
-  const steps = Math.max(1, options.projectionSteps ?? 5);
-  const stepSeconds = options.stepSeconds ?? inferStepSeconds(live);
-  const exactOnly = options.exactOnly ?? true;
-  const exactTolerance = options.exactTolerance ?? 0.05;
 
   const liveReturns = closeReturns(live);
   const k = liveReturns.length;
-  // Sequências curtas são aceitas de propósito: o objetivo é achar 5 velas
-  // idênticas seguidas, não um trecho longo inteiro (que quase nunca repete).
-  if (k < 4 || hist.length < k + 3) return [];
+  if (k < 6 || hist.length < k + 3) return [];
   const liveVol = stdev(liveReturns);
   if (!(liveVol > 0)) return [];
   const liveLastClose = live[live.length - 1]!.close;
-  const liveLastTime = live[live.length - 1]!.time;
 
   const found: MirrorMatch[] = [];
 
@@ -347,10 +193,7 @@ export function findMatchesInSeries(
       const candidate = transformReturns(winReturns, transform);
       const r = pearson(liveReturns, candidate);
       if (r < minCorrelation) continue;
-      const deviation = replayDeviation(live, window, transform);
-      const isExact = deviation <= exactTolerance;
-      if (exactOnly && !isExact) continue;
-      const projection = projectedPath(hist, start, k + 1, transform, steps);
+      const projection = projectedReturn(hist, start, k + 1, transform);
       if (!projection) continue;
 
       // Reescala o movimento projetado para a volatilidade atual do ativo ao vivo.
@@ -361,8 +204,6 @@ export function findMatchesInSeries(
         transform,
         correlation: r,
         similarity: Math.round(r * 1000) / 10,
-        maxDeviation: deviation,
-        exact: isExact,
         startTime: window[0]!.time,
         endTime: last.time,
         volatilityRatio: Math.round(ratio * 100) / 100,
@@ -371,13 +212,6 @@ export function findMatchesInSeries(
         projectedClose: liveLastClose * (1 + scaled),
         window,
         nextCandle: projection.candle,
-        projection: buildProjection(
-          projection.path,
-          ratio,
-          liveLastClose,
-          liveLastTime,
-          stepSeconds,
-        ),
       });
     }
   }
@@ -387,163 +221,7 @@ export function findMatchesInSeries(
   const kept: MirrorMatch[] = [];
   for (const match of found) {
     const overlapping = kept.some(
-      (m) =>
-        m.transform === match.transform &&
-        Math.abs(m.startTime - match.startTime) < (match.endTime - match.startTime) / 2,
-    );
-    if (overlapping) continue;
-    kept.push(match);
-    if (kept.length >= maxPerAsset) break;
-  }
-  return kept;
-}
-
-// ---------------------------------------------------------------------------
-// Caminho rápido: usado na varredura global (todos os ativos contra todos).
-// Pré-calcula os retornos e somas acumuladas do histórico uma única vez, para
-// que cada deslocamento custe apenas produtos escalares — sem recortar arrays.
-// ---------------------------------------------------------------------------
-
-export interface MirrorSeriesIndex {
-  /** Retornos entre fechamentos consecutivos (tamanho = velas - 1). */
-  rets: Float64Array;
-  /** Soma acumulada dos retornos. */
-  s1: Float64Array;
-  /** Soma acumulada dos quadrados. */
-  s2: Float64Array;
-}
-
-export function buildSeriesIndex(hist: MirrorCandle[]): MirrorSeriesIndex {
-  const m = Math.max(hist.length - 1, 0);
-  const rets = new Float64Array(m);
-  const s1 = new Float64Array(m + 1);
-  const s2 = new Float64Array(m + 1);
-  for (let i = 0; i < m; i++) {
-    const prev = hist[i]!.close;
-    const curr = hist[i + 1]!.close;
-    const r = prev > 0 ? (curr - prev) / prev : 0;
-    rets[i] = r;
-    s1[i + 1] = s1[i]! + r;
-    s2[i + 1] = s2[i]! + r * r;
-  }
-  return { rets, s1, s2 };
-}
-
-function popStats(sum: number, sumSq: number, n: number): { mean: number; sd: number } {
-  const mean = sum / n;
-  const variance = Math.max(sumSq / n - mean * mean, 0);
-  return { mean, sd: Math.sqrt(variance) };
-}
-
-/** Mesma busca de `findMatchesInSeries`, porém sobre um índice pré-calculado. */
-export function findMatchesFast(
-  asset: string,
-  timeframe: string,
-  live: MirrorCandle[],
-  hist: MirrorCandle[],
-  index: MirrorSeriesIndex,
-  options: MirrorSearchOptions = {},
-): MirrorMatch[] {
-  const minCorrelation = options.minCorrelation ?? 0.93;
-  const tolerance = options.volatilityTolerance ?? 2.4;
-  const maxPerAsset = options.maxPerAsset ?? 3;
-  const steps = Math.max(1, options.projectionSteps ?? 5);
-  const stepSeconds = options.stepSeconds ?? inferStepSeconds(live);
-  const exactOnly = options.exactOnly ?? true;
-  const exactTolerance = options.exactTolerance ?? 0.05;
-
-  const liveReturns = closeReturns(live);
-  const k = liveReturns.length;
-  const m = index.rets.length;
-  if (k < 4 || m < k + 3) return [];
-
-  const liveStats = popStats(
-    liveReturns.reduce((a, v) => a + v, 0),
-    liveReturns.reduce((a, v) => a + v * v, 0),
-    k,
-  );
-  if (!(liveStats.sd > 0)) return [];
-  const liveLastClose = live[live.length - 1]!.close;
-  const liveLastTime = live[live.length - 1]!.time;
-
-  // Transforma a janela ao vivo (não o histórico): 4 vetores fixos por ativo.
-  // As estatísticas de cada vetor (vStats) não dependem da posição no
-  // histórico — calcular UMA VEZ aqui, fora do loop de posições, é o que
-  // torna esse caminho "rápido"; calcular de novo a cada posição (como
-  // estava antes) triplicava o trabalho à toa em cada busca.
-  const variants = TRANSFORMS.map((transform) => {
-    const vector = Float64Array.from(transformReturns(liveReturns, transform));
-    const vStats = popStats(
-      vector.reduce((a, v) => a + v, 0),
-      vector.reduce((a, v) => a + v * v, 0),
-      k,
-    );
-    return { transform, vector, vStats };
-  }).filter((v) => v.vStats.sd > 0);
-
-  const found: MirrorMatch[] = [];
-  const rets = index.rets;
-
-  for (let start = 1; start + k + 1 < hist.length; start++) {
-    // Índices de retorno da janela: start .. start + k - 1
-    const from = start;
-    const to = start + k;
-    if (to > m) break;
-    if (options.excludeFrom != null && hist[start + k]!.time >= options.excludeFrom) break;
-
-    const winStats = popStats(index.s1[to]! - index.s1[from]!, index.s2[to]! - index.s2[from]!, k);
-    if (!(winStats.sd > 0)) continue;
-    const ratio = winStats.sd / liveStats.sd;
-    if (ratio > tolerance || ratio < 1 / tolerance) continue;
-
-    for (const { transform, vector, vStats } of variants) {
-      // r = (E[xy] - mx·my) / (sx·sy) — mesma escala do Pearson clássico.
-      let dot = 0;
-      for (let j = 0; j < k; j++) dot += vector[j]! * rets[from + j]!;
-      const r = (dot / k - vStats.mean * winStats.mean) / (vStats.sd * winStats.sd);
-      if (!Number.isFinite(r) || r < minCorrelation) continue;
-
-      const window = hist.slice(start, start + k + 1);
-      const deviation = replayDeviation(live, window, transform);
-      const isExact = deviation <= exactTolerance;
-      if (exactOnly && !isExact) continue;
-      const projection = projectedPath(hist, start, k + 1, transform, steps);
-      if (!projection) continue;
-      const scaled = projection.value / (ratio || 1);
-      found.push({
-        asset,
-        timeframe,
-        transform,
-        correlation: r,
-        similarity: Math.round(r * 1000) / 10,
-        maxDeviation: deviation,
-        exact: isExact,
-        startTime: window[0]!.time,
-        endTime: window[window.length - 1]!.time,
-        volatilityRatio: Math.round(ratio * 100) / 100,
-        predictedReturn: scaled,
-        direction: scaled >= 0 ? "CALL" : "PUT",
-        projectedClose: liveLastClose * (1 + scaled),
-        window,
-        nextCandle: projection.candle,
-        projection: buildProjection(
-          projection.path,
-          ratio,
-          liveLastClose,
-          liveLastTime,
-          stepSeconds,
-        ),
-      });
-    }
-  }
-
-  found.sort((a, b) => b.correlation - a.correlation);
-  const kept: MirrorMatch[] = [];
-  for (const match of found) {
-    const overlapping = kept.some(
-      (mm) =>
-        mm.transform === match.transform &&
-        Math.abs(mm.startTime - match.startTime) < (match.endTime - match.startTime) / 2,
+      (m) => m.transform === match.transform && Math.abs(m.startTime - match.startTime) < (match.endTime - match.startTime) / 2,
     );
     if (overlapping) continue;
     kept.push(match);

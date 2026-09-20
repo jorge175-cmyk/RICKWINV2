@@ -104,22 +104,9 @@ export const Route = createFileRoute("/api/public/iqoption-ws")({
           }
         });
 
-        // Keepalive towards the browser: on quiet assets no market frame may
-        // arrive for minutes, and without this the client watchdog treated a
-        // healthy channel as dead and reconnected constantly.
-        const keepAlive = setInterval(() => {
-          if (closed) return;
-          try {
-            server.send(JSON.stringify({ name: "proxy-keepalive", msg: { at: Date.now() } }));
-          } catch {
-            closeBoth();
-          }
-        }, 10_000);
-
         const closeBoth = () => {
           if (closed) return;
           closed = true;
-          clearInterval(keepAlive);
           clearTimeout(authenticationTimer);
           try {
             upstream.close();
