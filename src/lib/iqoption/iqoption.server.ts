@@ -468,7 +468,15 @@ async function withSession<T>(
 
 export async function getActiveIdMap(): Promise<Record<string, number>> {
   if (activeIdCache && activeIdCache.expiresAt > Date.now()) return activeIdCache.map;
-  if (activeIdPromise) return activeIdPromise;
+  if (activeIdPromise) {
+    try {
+      return await activeIdPromise;
+    } catch {
+      // A catalogue load started by another request can fail with a
+      // cross-request I/O error; retry on this request's own session.
+      activeIdPromise = null;
+    }
+  }
 
   activeIdPromise = withSession(async (send, waitFor) => {
     send({
