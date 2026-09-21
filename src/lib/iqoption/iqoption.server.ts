@@ -276,28 +276,63 @@ let sharedSession: SharedSession | null = null;
 let sharedSessionPromise: Promise<SharedSession> | null = null;
 let sessionIdleTimer: ReturnType<typeof setTimeout> | null = null;
 
+/**
+ * Cloudflare Workers forbid touching I/O objects (sockets, timers) created by a
+ * different request. Reusing the cached upstream socket across requests throws
+ * "Cannot perform I/O on behalf of a different request", which used to break
+ * every candle fetch. Such a session is simply dropped and rebuilt.
+ */
+function isCrossRequestIoError(error: unknown) {
+  return (
+    error instanceof Error && /different request|I\/O on behalf/i.test(error.message)
+  );
+}
+
+/** readyState read that never throws when the socket belongs to another request. */
+function sessionIsOpen(session: SharedSession | null): boolean {
+  if (!session) return false;
+  try {
+    return session.socket.readyState === 1;
+  } catch {
+    return false;
+  }
+}
+
 function discardSharedSession() {
-  if (sessionIdleTimer) clearTimeout(sessionIdleTimer);
+  try {
+    if (sessionIdleTimer) clearTimeout(sessionIdleTimer);
+  } catch {
+    // timer belonged to another request
+  }
   sessionIdleTimer = null;
   const session = sharedSession;
   sharedSession = null;
+  sharedSessionPromise = null;
   if (!session) return;
-  if (session.heartbeat) clearInterval(session.heartbeat);
+  try {
+    if (session.heartbeat) clearInterval(session.heartbeat);
+  } catch {
+    // timer belonged to another request
+  }
   session.heartbeat = null;
   try {
     session.socket.close();
   } catch {
-    // already closed
+    // already closed or owned by another request
   }
 }
 
 function armSessionIdleTimer(session: SharedSession) {
-  if (sessionIdleTimer) clearTimeout(sessionIdleTimer);
-  sessionIdleTimer = setTimeout(() => {
-    if (sharedSession === session && Date.now() - session.touchedAt >= SESSION_IDLE_MS) {
-      discardSharedSession();
-    }
-  }, SESSION_IDLE_MS);
+  try {
+    if (sessionIdleTimer) clearTimeout(sessionIdleTimer);
+    sessionIdleTimer = setTimeout(() => {
+      if (sharedSession === session && Date.now() - session.touchedAt >= SESSION_IDLE_MS) {
+        discardSharedSession();
+      }
+    }, SESSION_IDLE_MS);
+  } catch {
+    sessionIdleTimer = null;
+  }
 }
 
 
@@ -377,12 +412,24 @@ async function createSharedSession(): Promise<SharedSession> {
 }
 
 async function getSharedSession(): Promise<SharedSession> {
-  if (sharedSession?.socket.readyState === 1) {
-    sharedSession.touchedAt = Date.now();
-    armSessionIdleTimer(sharedSession);
-    return sharedSession;
+  if (sessionIsOpen(sharedSession)) {
+    const session = sharedSession!;
+    session.touchedAt = Date.now();
+    armSessionIdleTimer(session);
+    return session;
   }
-  if (sharedSessionPromise) return sharedSessionPromise;
+  // Either closed or created by a previous request: drop it without touching
+  // its I/O objects so a fresh socket can be built for this request.
+  if (sharedSession) discardSharedSession();
+  if (sharedSessionPromise) {
+    try {
+      const pending = await sharedSessionPromise;
+      if (sessionIsOpen(pending)) return pending;
+    } catch {
+      // fall through to a fresh session
+    }
+    sharedSessionPromise = null;
+  }
 
   sharedSessionPromise = createSharedSession()
     .then((session) => {
@@ -407,11 +454,11 @@ async function withSession<T>(
     return await fn(session.send, session.waitFor);
   } catch (error) {
     // A single slow candle response must not tear down the shared connection
-    // used by every other request. Recreate it only when the transport died.
-    const socketDied = session.socket.readyState !== 1;
+    // used by every other request. Recreate it only when the transport died or
+    // when this worker inherited a socket from another request.
+    const crossRequest = isCrossRequestIoError(error);
+    const socketDied = crossRequest || !sessionIsOpen(session);
     if (socketDied) discardSharedSession();
-    // A dead socket recovers on a fresh transport with the cached SSID. A
-    // request timeout is returned to its caller without disrupting others.
     if (socketDied && attempt === 0 && !(error instanceof IqOptionBackoffError)) {
       return withSession(fn, attempt + 1);
     }
@@ -421,7 +468,15 @@ async function withSession<T>(
 
 export async function getActiveIdMap(): Promise<Record<string, number>> {
   if (activeIdCache && activeIdCache.expiresAt > Date.now()) return activeIdCache.map;
-  if (activeIdPromise) return activeIdPromise;
+  if (activeIdPromise) {
+    try {
+      return await activeIdPromise;
+    } catch {
+      // A catalogue load started by another request can fail with a
+      // cross-request I/O error; retry on this request's own session.
+      activeIdPromise = null;
+    }
+  }
 
   activeIdPromise = withSession(async (send, waitFor) => {
     send({
@@ -491,7 +546,15 @@ export async function fetchCandles(
   const cached = candleCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.candles;
   const pending = candleRequests.get(cacheKey);
-  if (pending) return pending;
+  if (pending) {
+    try {
+      return await pending;
+    } catch {
+      // An in-flight request from another worker request may fail with a
+      // cross-request I/O error; this caller simply issues its own.
+      candleRequests.delete(cacheKey);
+    }
+  }
 
   const activeId = (await getActiveIdMap())[iqName.toUpperCase()];
   if (!activeId) throw new Error(`Unknown IQ Option asset: ${iqName}`);
