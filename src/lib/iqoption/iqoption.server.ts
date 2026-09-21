@@ -276,28 +276,63 @@ let sharedSession: SharedSession | null = null;
 let sharedSessionPromise: Promise<SharedSession> | null = null;
 let sessionIdleTimer: ReturnType<typeof setTimeout> | null = null;
 
+/**
+ * Cloudflare Workers forbid touching I/O objects (sockets, timers) created by a
+ * different request. Reusing the cached upstream socket across requests throws
+ * "Cannot perform I/O on behalf of a different request", which used to break
+ * every candle fetch. Such a session is simply dropped and rebuilt.
+ */
+function isCrossRequestIoError(error: unknown) {
+  return (
+    error instanceof Error && /different request|I\/O on behalf/i.test(error.message)
+  );
+}
+
+/** readyState read that never throws when the socket belongs to another request. */
+function sessionIsOpen(session: SharedSession | null): boolean {
+  if (!session) return false;
+  try {
+    return session.socket.readyState === 1;
+  } catch {
+    return false;
+  }
+}
+
 function discardSharedSession() {
-  if (sessionIdleTimer) clearTimeout(sessionIdleTimer);
+  try {
+    if (sessionIdleTimer) clearTimeout(sessionIdleTimer);
+  } catch {
+    // timer belonged to another request
+  }
   sessionIdleTimer = null;
   const session = sharedSession;
   sharedSession = null;
+  sharedSessionPromise = null;
   if (!session) return;
-  if (session.heartbeat) clearInterval(session.heartbeat);
+  try {
+    if (session.heartbeat) clearInterval(session.heartbeat);
+  } catch {
+    // timer belonged to another request
+  }
   session.heartbeat = null;
   try {
     session.socket.close();
   } catch {
-    // already closed
+    // already closed or owned by another request
   }
 }
 
 function armSessionIdleTimer(session: SharedSession) {
-  if (sessionIdleTimer) clearTimeout(sessionIdleTimer);
-  sessionIdleTimer = setTimeout(() => {
-    if (sharedSession === session && Date.now() - session.touchedAt >= SESSION_IDLE_MS) {
-      discardSharedSession();
-    }
-  }, SESSION_IDLE_MS);
+  try {
+    if (sessionIdleTimer) clearTimeout(sessionIdleTimer);
+    sessionIdleTimer = setTimeout(() => {
+      if (sharedSession === session && Date.now() - session.touchedAt >= SESSION_IDLE_MS) {
+        discardSharedSession();
+      }
+    }, SESSION_IDLE_MS);
+  } catch {
+    sessionIdleTimer = null;
+  }
 }
 
 
