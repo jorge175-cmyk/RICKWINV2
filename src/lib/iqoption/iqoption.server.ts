@@ -412,12 +412,24 @@ async function createSharedSession(): Promise<SharedSession> {
 }
 
 async function getSharedSession(): Promise<SharedSession> {
-  if (sharedSession?.socket.readyState === 1) {
-    sharedSession.touchedAt = Date.now();
-    armSessionIdleTimer(sharedSession);
-    return sharedSession;
+  if (sessionIsOpen(sharedSession)) {
+    const session = sharedSession!;
+    session.touchedAt = Date.now();
+    armSessionIdleTimer(session);
+    return session;
   }
-  if (sharedSessionPromise) return sharedSessionPromise;
+  // Either closed or created by a previous request: drop it without touching
+  // its I/O objects so a fresh socket can be built for this request.
+  if (sharedSession) discardSharedSession();
+  if (sharedSessionPromise) {
+    try {
+      const pending = await sharedSessionPromise;
+      if (sessionIsOpen(pending)) return pending;
+    } catch {
+      // fall through to a fresh session
+    }
+    sharedSessionPromise = null;
+  }
 
   sharedSessionPromise = createSharedSession()
     .then((session) => {
@@ -442,11 +454,11 @@ async function withSession<T>(
     return await fn(session.send, session.waitFor);
   } catch (error) {
     // A single slow candle response must not tear down the shared connection
-    // used by every other request. Recreate it only when the transport died.
-    const socketDied = session.socket.readyState !== 1;
+    // used by every other request. Recreate it only when the transport died or
+    // when this worker inherited a socket from another request.
+    const crossRequest = isCrossRequestIoError(error);
+    const socketDied = crossRequest || !sessionIsOpen(session);
     if (socketDied) discardSharedSession();
-    // A dead socket recovers on a fresh transport with the cached SSID. A
-    // request timeout is returned to its caller without disrupting others.
     if (socketDied && attempt === 0 && !(error instanceof IqOptionBackoffError)) {
       return withSession(fn, attempt + 1);
     }
