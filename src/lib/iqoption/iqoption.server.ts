@@ -538,7 +538,15 @@ export async function fetchCandles(
   const cached = candleCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.candles;
   const pending = candleRequests.get(cacheKey);
-  if (pending) return pending;
+  if (pending) {
+    try {
+      return await pending;
+    } catch {
+      // An in-flight request from another worker request may fail with a
+      // cross-request I/O error; this caller simply issues its own.
+      candleRequests.delete(cacheKey);
+    }
+  }
 
   const activeId = (await getActiveIdMap())[iqName.toUpperCase()];
   if (!activeId) throw new Error(`Unknown IQ Option asset: ${iqName}`);
