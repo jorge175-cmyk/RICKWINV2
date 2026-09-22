@@ -228,7 +228,13 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
             continue;
           }
           try {
-            const history = await loadHistory(fetchCandles, iqName, size, data.historyBlocks);
+            const history = await loadHistory(
+              fetchCandles,
+              iqName,
+              data.timeframe,
+              size,
+              data.historyBlocks,
+            );
             if (history.length < data.windowSize + 6) {
               skipped.push(label);
               continue;
