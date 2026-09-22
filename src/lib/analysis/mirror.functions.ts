@@ -257,6 +257,7 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
       if (data.phase === "collect") {
         const skipped: string[] = [];
         let processed = 0;
+        const broker = { down: false };
         for (const { iqName, label } of batch) {
           const existing = store.get(iqName);
           if (existing && existing.at > Date.now() - STORE_TTL_MS) {
@@ -270,6 +271,7 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
               data.timeframe,
               size,
               data.historyBlocks,
+              broker,
             );
             if (history.length < data.windowSize + 6) {
               skipped.push(label);
@@ -281,7 +283,7 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
             if (error instanceof IqOptionBackoffError) throw error;
             skipped.push(label);
           }
-          await sleep(120);
+          if (!broker.down) await sleep(120);
         }
         return {
           ...base,
