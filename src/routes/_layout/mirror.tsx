@@ -8,7 +8,7 @@ import { Progress } from "@/components/ui/progress";
 import { TimeframeSelector } from "@/components/trading/TimeframeSelector";
 import { MirrorMatchCard } from "@/components/trading/MirrorMatchCard";
 import { getOtcAssets } from "@/lib/iqoption/candles.functions";
-import { mirrorScanChunk, type MirrorAssetGroup } from "@/lib/analysis/mirror.functions";
+import { mirrorScanChunk, mirrorStoredAssets, type MirrorAssetGroup } from "@/lib/analysis/mirror.functions";
 import { mirrorVerdict, type MirrorVerdict } from "@/lib/analysis/mirrorVerdict.functions";
 import { useIqOptionConnection } from "@/lib/iqoption/useIqOptionStream";
 import { toast } from "sonner";
