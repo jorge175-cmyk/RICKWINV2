@@ -34,6 +34,8 @@ async function loadHistory(
   timeframe: string,
   sizeSeconds: number,
   blocks: number,
+  /** Disjuntor do lote: quando a corretora falha, os próximos ativos usam só o banco. */
+  broker: { down: boolean },
 ): Promise<MirrorCandle[]> {
   const store = await import("./mirrorStore.server");
   const byTime = new Map<number, MirrorCandle>();
@@ -52,12 +54,15 @@ async function loadHistory(
   let fetchFailure: unknown = null;
 
   const tryFetch = async (count: number, to?: number): Promise<MirrorCandle[]> => {
+    if (broker.down) return [];
     try {
       return await fetchCandles(iqName, sizeSeconds, count, to);
     } catch (error) {
       fetchFailure = error;
+      broker.down = true;
       return [];
     }
+
   };
 
   if (saved.length === 0) {
