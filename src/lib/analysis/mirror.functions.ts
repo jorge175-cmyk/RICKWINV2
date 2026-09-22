@@ -34,6 +34,8 @@ async function loadHistory(
   timeframe: string,
   sizeSeconds: number,
   blocks: number,
+  /** Disjuntor do lote: quando a corretora falha, os próximos ativos usam só o banco. */
+  broker: { down: boolean },
 ): Promise<MirrorCandle[]> {
   const store = await import("./mirrorStore.server");
   const byTime = new Map<number, MirrorCandle>();
@@ -48,12 +50,26 @@ async function loadHistory(
 
   const fresh: MirrorCandle[] = [];
   const targetDepth = blocks * BLOCK_SIZE;
+  /** Falhas na corretora não descartam o histórico já salvo no banco. */
+  let fetchFailure: unknown = null;
+
+  const tryFetch = async (count: number, to?: number): Promise<MirrorCandle[]> => {
+    if (broker.down) return [];
+    try {
+      return await fetchCandles(iqName, sizeSeconds, count, to);
+    } catch (error) {
+      fetchFailure = error;
+      broker.down = true;
+      return [];
+    }
+
+  };
 
   if (saved.length === 0) {
     // Primeira coleta deste ativo: baixa blocos voltando no tempo.
     let to = Math.floor(Date.now() / 1000);
     for (let i = 0; i < blocks; i++) {
-      const chunk = await fetchCandles(iqName, sizeSeconds, BLOCK_SIZE, i === 0 ? undefined : to);
+      const chunk = await tryFetch(BLOCK_SIZE, i === 0 ? undefined : to);
       if (chunk.length === 0) break;
       for (const c of chunk) {
         byTime.set(c.time, c);
@@ -69,15 +85,15 @@ async function loadHistory(
     // Incremental: só as velas novas desde a última salva.
     const newest = saved[saved.length - 1]!.time;
     const missing = Math.ceil((Date.now() / 1000 - newest) / sizeSeconds) + 2;
-    const chunk = await fetchCandles(iqName, sizeSeconds, Math.min(Math.max(missing, 5), BLOCK_SIZE));
+    const chunk = await tryFetch(Math.min(Math.max(missing, 5), BLOCK_SIZE));
     for (const c of chunk) {
       if (!byTime.has(c.time)) fresh.push(c);
       byTime.set(c.time, c);
     }
     // Se ainda falta profundidade, estende um bloco para trás por varredura.
-    if (byTime.size < targetDepth) {
+    if (byTime.size < targetDepth && fetchFailure == null) {
       await sleep(250);
-      const older = await fetchCandles(iqName, sizeSeconds, BLOCK_SIZE, saved[0]!.time - sizeSeconds);
+      const older = await tryFetch(BLOCK_SIZE, saved[0]!.time - sizeSeconds);
       for (const c of older) {
         if (!byTime.has(c.time)) fresh.push(c);
         byTime.set(c.time, c);
@@ -98,8 +114,28 @@ async function loadHistory(
       console.error("[mirror] gravação do histórico falhou", error);
     }
   }
+  // Sem velas salvas e sem resposta da corretora: o erro precisa subir.
+  if (merged.length === 0 && fetchFailure != null) throw fetchFailure;
   return merged.length > store.MAX_STORED_CANDLES ? merged.slice(-store.MAX_STORED_CANDLES) : merged;
 }
+
+/** Ativos que já têm histórico salvo — permitem varrer mesmo sem catálogo ao vivo. */
+export const mirrorStoredAssets = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async (): Promise<string[]> => {
+    try {
+      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      const { data, error } = await supabaseAdmin
+        .from("iqoption_candle_coverage")
+        .select("asset")
+        .limit(1000);
+      if (error) throw error;
+      return [...new Set((data ?? []).map((r) => r.asset))];
+    } catch (error) {
+      console.error("[mirror] lista de ativos salvos falhou", error);
+      return [];
+    }
+  });
 
 
 interface StoredSeries {
@@ -221,6 +257,7 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
       if (data.phase === "collect") {
         const skipped: string[] = [];
         let processed = 0;
+        const broker = { down: false };
         for (const { iqName, label } of batch) {
           const existing = store.get(iqName);
           if (existing && existing.at > Date.now() - STORE_TTL_MS) {
@@ -228,7 +265,14 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
             continue;
           }
           try {
-            const history = await loadHistory(fetchCandles, iqName, size, data.historyBlocks);
+            const history = await loadHistory(
+              fetchCandles,
+              iqName,
+              data.timeframe,
+              size,
+              data.historyBlocks,
+              broker,
+            );
             if (history.length < data.windowSize + 6) {
               skipped.push(label);
               continue;
@@ -239,7 +283,7 @@ export const mirrorScanChunk = createServerFn({ method: "POST" })
             if (error instanceof IqOptionBackoffError) throw error;
             skipped.push(label);
           }
-          await sleep(120);
+          if (!broker.down) await sleep(120);
         }
         return {
           ...base,

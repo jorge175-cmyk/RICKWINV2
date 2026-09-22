@@ -8,7 +8,7 @@ import { Progress } from "@/components/ui/progress";
 import { TimeframeSelector } from "@/components/trading/TimeframeSelector";
 import { MirrorMatchCard } from "@/components/trading/MirrorMatchCard";
 import { getOtcAssets } from "@/lib/iqoption/candles.functions";
-import { mirrorScanChunk, type MirrorAssetGroup } from "@/lib/analysis/mirror.functions";
+import { mirrorScanChunk, mirrorStoredAssets, type MirrorAssetGroup } from "@/lib/analysis/mirror.functions";
 import { mirrorVerdict, type MirrorVerdict } from "@/lib/analysis/mirrorVerdict.functions";
 import { useIqOptionConnection } from "@/lib/iqoption/useIqOptionStream";
 import { toast } from "sonner";
@@ -68,11 +68,24 @@ function MirrorPage() {
     staleTime: 30 * 60 * 1000,
   });
 
+  /** Ativos com histórico já salvo: a varredura funciona mesmo sem catálogo ao vivo. */
+  const { data: savedAssets = [] } = useQuery({
+    queryKey: ["mirrorStoredAssets"],
+    queryFn: () => mirrorStoredAssets(),
+    staleTime: 30 * 60 * 1000,
+  });
+
   /** Catálogo completo da corretora: OTC primeiro, onde a repetição é comum. */
   const allAssets = useMemo(() => {
     const merged = new Map<string, { symbol: string; category: string }>();
     for (const a of otcAssets) {
       merged.set(a.symbol.toUpperCase(), { symbol: a.symbol, category: a.category });
+    }
+    for (const symbol of savedAssets) {
+      const key = symbol.toUpperCase();
+      if (!merged.has(key)) {
+        merged.set(key, { symbol, category: key.endsWith("-OTC") ? "OTC" : "MERCADO REAL" });
+      }
     }
     for (const symbol of FALLBACK_ASSETS) {
       const key = symbol.toUpperCase();
@@ -83,7 +96,7 @@ function MirrorPage() {
         a.category === b.category ? a.symbol.localeCompare(b.symbol) : a.category === "OTC" ? -1 : 1,
       )
       .map((a) => a.symbol);
-  }, [otcAssets]);
+  }, [otcAssets, savedAssets]);
 
   const running = phase === "collect" || phase === "match";
 
