@@ -39,15 +39,13 @@ export const Route = createFileRoute("/api/public/iqoption-ws")({
           return new Response("Unauthorized", { status: 401 });
         }
 
-        const { getSsid, openUpstreamSocket, authenticate, IqOptionBackoffError } = await import(
+        const { openAuthenticatedUpstreamSocket, IqOptionBackoffError } = await import(
           "@/lib/iqoption/iqoption.server"
         );
 
-        let ssid: string;
         let upstream: WebSocket;
         try {
-          ssid = await getSsid();
-          upstream = await openUpstreamSocket();
+          upstream = await openAuthenticatedUpstreamSocket();
         } catch (error) {
           console.error("[iqoption-ws] upstream setup failed", error);
           if (error instanceof IqOptionBackoffError) {
@@ -64,9 +62,8 @@ export const Route = createFileRoute("/api/public/iqoption-ws")({
         const server = pair["1"]! as WebSocket & { accept?: () => void };
         server.accept?.();
 
-        const pending: string[] = [];
-        // Frames can arrive from upstream before the browser side is OPEN.
-        // Without this queue the first frames are lost and the client stalls.
+        // Frames can arrive before the browser side is OPEN. Without this
+        // queue the first market frames are lost.
         const pendingToClient: string[] = [];
         const toClient = (data: string) => {
           if (server.readyState === 1) {
@@ -76,26 +73,16 @@ export const Route = createFileRoute("/api/public/iqoption-ws")({
             pendingToClient.push(data);
           }
         };
-        let upstreamReady = false;
+        let upstreamReady = true;
         let closed = false;
-        const authenticationTimer = setTimeout(() => closeBoth(), 20_000);
-
-        upstream.addEventListener("open", () => {
-          authenticate(upstream, ssid);
-          upstream.send(JSON.stringify({ name: "setOptions", msg: { sendResults: true } }));
-        });
+        upstream.send(JSON.stringify({ name: "setOptions", msg: { sendResults: true } }));
+        toClient(JSON.stringify({ name: "proxy-ready", msg: { ok: true } }));
 
         upstream.addEventListener("message", (event) => {
           const data = (event as MessageEvent).data;
           if (typeof data === "string") {
             try {
               const frame = JSON.parse(data) as { name?: string; msg?: unknown };
-              if (!upstreamReady && frame.name === "profile" && frame.msg) {
-                upstreamReady = true;
-                clearTimeout(authenticationTimer);
-                for (const queued of pending.splice(0)) upstream.send(queued);
-                toClient(JSON.stringify({ name: "proxy-ready", msg: { ok: true } }));
-              }
               // Answering the provider heartbeat keeps this channel alive for
               // hours instead of being dropped as idle.
               if (frame.name === "heartbeat") {
@@ -131,7 +118,6 @@ export const Route = createFileRoute("/api/public/iqoption-ws")({
           if (closed) return;
           closed = true;
           clearInterval(keepAlive);
-          clearTimeout(authenticationTimer);
           try {
             upstream.close();
           } catch {
@@ -157,7 +143,6 @@ export const Route = createFileRoute("/api/public/iqoption-ws")({
             return;
           }
           if (upstreamReady) upstream.send(data);
-          else pending.push(data);
         });
 
         server.addEventListener("close", closeBoth);
