@@ -258,6 +258,98 @@ export function authenticate(socket: WebSocket, ssid: string) {
   socket.send(JSON.stringify({ name: "ssid", msg: ssid, request_id: "auth" }));
 }
 
+class IqOptionAuthenticationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "IqOptionAuthenticationError";
+  }
+}
+
+async function invalidateRejectedSsid(staleSsid: string) {
+  if (cachedSsid?.value === staleSsid) cachedSsid = null;
+  const { error } = await supabaseAdmin
+    .from("iqoption_connection_state")
+    .update({
+      ssid: null,
+      ssid_expires_at: null,
+      login_blocked_until: null,
+      login_blocked_reason: null,
+      login_failures: 0,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("singleton", true)
+    .eq("ssid", staleSsid);
+  if (error) throw new Error(`Unable to invalidate rejected IQ Option session: ${error.message}`);
+  console.info("[iqoption] rejected session invalidated; requesting one coordinated login");
+}
+
+/**
+ * Opens and authenticates one upstream socket in the current request context.
+ * A stored SSID can expire before its nominal TTL (for example after another
+ * login). In that case it is conditionally cleared and renewed exactly once.
+ */
+export async function openAuthenticatedUpstreamSocket(attempt = 0): Promise<WebSocket> {
+  const ssid = await getSsid();
+  const socket = await openUpstreamSocket();
+  let opened = false;
+
+  try {
+    await waitOpen(socket);
+    opened = true;
+    const profile = new Promise<UpstreamFrame>((resolve, reject) => {
+      const cleanup = () => {
+        clearTimeout(timer);
+        socket.removeEventListener("message", onMessage);
+        socket.removeEventListener("close", onClose);
+        socket.removeEventListener("error", onError);
+      };
+      const onMessage = (event: Event) => {
+        const data = (event as MessageEvent).data;
+        if (typeof data !== "string") return;
+        try {
+          const frame = JSON.parse(data) as UpstreamFrame;
+          if (frame.name !== "profile") return;
+          cleanup();
+          resolve(frame);
+        } catch {
+          // Ignore non-JSON provider frames while waiting for authentication.
+        }
+      };
+      const onClose = () => {
+        cleanup();
+        reject(new Error("Upstream closed during authentication"));
+      };
+      const onError = () => {
+        cleanup();
+        reject(new Error("Upstream failed during authentication"));
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new IqOptionAuthenticationError("IQ Option session confirmation timed out"));
+      }, 15_000);
+      socket.addEventListener("message", onMessage);
+      socket.addEventListener("close", onClose);
+      socket.addEventListener("error", onError);
+    });
+    authenticate(socket, ssid);
+    const frame = await profile;
+    if (!frame.msg) throw new IqOptionAuthenticationError("IQ Option rejected the stored session");
+    return socket;
+  } catch (error) {
+    try {
+      socket.close();
+    } catch {
+      // already closed
+    }
+    const authenticationFailed = opened && error instanceof IqOptionAuthenticationError;
+    if (authenticationFailed && attempt === 0) {
+      await invalidateRejectedSsid(ssid);
+      return openAuthenticatedUpstreamSocket(attempt + 1);
+    }
+    throw error;
+  }
+}
+
 interface UpstreamFrame {
   name?: string;
   request_id?: string;
@@ -272,47 +364,11 @@ interface SharedSession {
   heartbeat: ReturnType<typeof setInterval> | null;
 }
 
-let sharedSession: SharedSession | null = null;
-let sharedSessionPromise: Promise<SharedSession> | null = null;
-let sessionIdleTimer: ReturnType<typeof setTimeout> | null = null;
-
-/**
- * Cloudflare Workers forbid touching I/O objects (sockets, timers) created by a
- * different request. Reusing the cached upstream socket across requests throws
- * "Cannot perform I/O on behalf of a different request", which used to break
- * every candle fetch. Such a session is simply dropped and rebuilt.
- */
-function isCrossRequestIoError(error: unknown) {
-  return (
-    error instanceof Error && /different request|I\/O on behalf/i.test(error.message)
-  );
-}
-
-/** readyState read that never throws when the socket belongs to another request. */
-function sessionIsOpen(session: SharedSession | null): boolean {
-  if (!session) return false;
-  try {
-    return session.socket.readyState === 1;
-  } catch {
-    return false;
-  }
-}
-
-function discardSharedSession() {
-  try {
-    if (sessionIdleTimer) clearTimeout(sessionIdleTimer);
-  } catch {
-    // timer belonged to another request
-  }
-  sessionIdleTimer = null;
-  const session = sharedSession;
-  sharedSession = null;
-  sharedSessionPromise = null;
-  if (!session) return;
+function closeSession(session: SharedSession) {
   try {
     if (session.heartbeat) clearInterval(session.heartbeat);
   } catch {
-    // timer belonged to another request
+    // already released
   }
   session.heartbeat = null;
   try {
@@ -322,27 +378,10 @@ function discardSharedSession() {
   }
 }
 
-function armSessionIdleTimer(session: SharedSession) {
-  try {
-    if (sessionIdleTimer) clearTimeout(sessionIdleTimer);
-    sessionIdleTimer = setTimeout(() => {
-      if (sharedSession === session && Date.now() - session.touchedAt >= SESSION_IDLE_MS) {
-        discardSharedSession();
-      }
-    }, SESSION_IDLE_MS);
-  } catch {
-    sessionIdleTimer = null;
-  }
-}
 
-
-/** One authenticated upstream socket shared by all server requests in this worker. */
+/** One authenticated upstream socket scoped to the current server request. */
 async function createSharedSession(): Promise<SharedSession> {
-  // Resolve the coordinated credential before opening a socket. During a
-  // provider cooldown this avoids creating a fresh upstream connection for
-  // every candle/analysis request.
-  const ssid = await getSsid();
-  const socket = await openUpstreamSocket();
+  const socket = await openAuthenticatedUpstreamSocket();
   const listeners = new Set<(frame: UpstreamFrame) => void>();
 
   socket.addEventListener("message", (event) => {
@@ -373,20 +412,6 @@ async function createSharedSession(): Promise<SharedSession> {
       listeners.add(listener);
     });
 
-  try {
-    await waitOpen(socket);
-    authenticate(socket, ssid);
-    // IQ Option drops requests sent before the session profile is delivered.
-    await waitFor((f) => f.name === "profile" && !!f.msg, 15_000);
-  } catch (error) {
-    try {
-      socket.close();
-    } catch {
-      // already closed
-    }
-    throw error;
-  }
-
   const session: SharedSession = { socket, send, waitFor, touchedAt: Date.now(), heartbeat: null };
   // A periodic heartbeat keeps the authenticated socket alive, so the session
   // survives quiet periods and never needs a fresh login.
@@ -399,70 +424,23 @@ async function createSharedSession(): Promise<SharedSession> {
       // socket died; the close listener handles recovery
     }
   }, HEARTBEAT_INTERVAL_MS);
-  const invalidate = () => {
-    if (sharedSession === session) discardSharedSession();
-    else if (session.heartbeat) {
-      clearInterval(session.heartbeat);
-      session.heartbeat = null;
-    }
-  };
+  const invalidate = () => closeSession(session);
   socket.addEventListener("close", invalidate);
   socket.addEventListener("error", invalidate);
   return session;
 }
 
-async function getSharedSession(): Promise<SharedSession> {
-  if (sessionIsOpen(sharedSession)) {
-    const session = sharedSession!;
-    session.touchedAt = Date.now();
-    armSessionIdleTimer(session);
-    return session;
-  }
-  // Either closed or created by a previous request: drop it without touching
-  // its I/O objects so a fresh socket can be built for this request.
-  if (sharedSession) discardSharedSession();
-  if (sharedSessionPromise) {
-    try {
-      const pending = await sharedSessionPromise;
-      if (sessionIsOpen(pending)) return pending;
-    } catch {
-      // fall through to a fresh session
-    }
-    sharedSessionPromise = null;
-  }
-
-  sharedSessionPromise = createSharedSession()
-    .then((session) => {
-      sharedSession = session;
-      armSessionIdleTimer(session);
-      return session;
-    })
-    .finally(() => {
-      sharedSessionPromise = null;
-    });
-  return sharedSessionPromise;
-}
-
 async function withSession<T>(
   fn: (send: SharedSession["send"], waitFor: SharedSession["waitFor"]) => Promise<T>,
-  attempt = 0,
 ): Promise<T> {
-  const session = await getSharedSession();
-  session.touchedAt = Date.now();
-  armSessionIdleTimer(session);
+  // WebSocket I/O objects are request-bound in the deployed runtime. Reusing
+  // one from a previous request can leave sends apparently successful while
+  // its response events never reach this request, producing false timeouts.
+  const session = await createSharedSession();
   try {
     return await fn(session.send, session.waitFor);
-  } catch (error) {
-    // A single slow candle response must not tear down the shared connection
-    // used by every other request. Recreate it only when the transport died or
-    // when this worker inherited a socket from another request.
-    const crossRequest = isCrossRequestIoError(error);
-    const socketDied = crossRequest || !sessionIsOpen(session);
-    if (socketDied) discardSharedSession();
-    if (socketDied && attempt === 0 && !(error instanceof IqOptionBackoffError)) {
-      return withSession(fn, attempt + 1);
-    }
-    throw error;
+  } finally {
+    closeSession(session);
   }
 }
 
